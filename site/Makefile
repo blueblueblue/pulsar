@@ -38,7 +38,10 @@ setup: ruby_setup doxygen_install python_setup
 
 travis_setup: ruby_setup
 
-travis_publish: deep_clean setup build
+travis_build:
+	scripts/build-all-versions.sh
+
+travis_publish: deep_clean travis_setup travis_build
 
 build: api_docs
 	scripts/build-all-versions.sh
