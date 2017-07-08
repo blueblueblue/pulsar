@@ -1,9 +1,6 @@
-
 language: java C++ ruby
 jdk:
   - oraclejdk8
-rvm:
-- 2.2.0
 
 cache:
   directories:
