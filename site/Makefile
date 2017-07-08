@@ -1,7 +1,6 @@
 BUNDLER_VERSION = 1.15.1
 BUNDLE = bundle _${BUNDLER_VERSION}_
 JEKYLL = ${BUNDLE} exec jekyll
-RAKE = ${BUNDLE} exec rake
 
 deep_clean:
 	rm -rf \
