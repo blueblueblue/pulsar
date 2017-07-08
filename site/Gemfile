@@ -3,10 +3,6 @@ ruby '2.2.0'
 
 gem 'jekyll', '3.4.3'
 
-group :test do
-  gem 'rake', '12.0.0'
-end
-
 group :jekyll_plugins do
   gem 'jekyll-livereload'
 end
