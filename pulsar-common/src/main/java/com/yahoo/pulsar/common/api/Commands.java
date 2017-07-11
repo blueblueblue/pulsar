@@ -15,13 +15,13 @@
  */
 package com.yahoo.pulsar.common.api;
 
+import static com.yahoo.pulsar.checksum.utils.Crc32cChecksum.computeChecksum;
+import static com.yahoo.pulsar.checksum.utils.Crc32cChecksum.resumeChecksum;
+
 import java.io.IOException;
 import java.util.List;
 
 import com.google.protobuf.ByteString;
-import static com.yahoo.pulsar.checksum.utils.Crc32cChecksum.computeChecksum;
-import static com.yahoo.pulsar.checksum.utils.Crc32cChecksum.resumeChecksum;
-
 import com.yahoo.pulsar.common.api.proto.PulsarApi;
 import com.yahoo.pulsar.common.api.proto.PulsarApi.AuthMethod;
 import com.yahoo.pulsar.common.api.proto.PulsarApi.BaseCommand;
@@ -53,10 +53,8 @@ import com.yahoo.pulsar.common.api.proto.PulsarApi.CommandSendError;
 import com.yahoo.pulsar.common.api.proto.PulsarApi.CommandSendReceipt;
 import com.yahoo.pulsar.common.api.proto.PulsarApi.CommandSubscribe;
 import com.yahoo.pulsar.common.api.proto.PulsarApi.CommandSubscribe.SubType;
-import com.yahoo.pulsar.common.policies.data.ConsumerStats;
 import com.yahoo.pulsar.common.api.proto.PulsarApi.CommandSuccess;
 import com.yahoo.pulsar.common.api.proto.PulsarApi.CommandUnsubscribe;
-import com.yahoo.pulsar.common.api.proto.PulsarApi.KeyValue;
 import com.yahoo.pulsar.common.api.proto.PulsarApi.MessageIdData;
 import com.yahoo.pulsar.common.api.proto.PulsarApi.MessageMetadata;
 import com.yahoo.pulsar.common.api.proto.PulsarApi.ProtocolVersion;
@@ -79,10 +77,15 @@ public class Commands {
     private static final int checksumSize = 4;
 
     public static ByteBuf newConnect(String authMethodName, String authData, String libVersion) {
-        return newConnect(authMethodName, authData, getCurrentProtocolVersion(), libVersion);
+        return newConnect(authMethodName, authData, getCurrentProtocolVersion(), libVersion, null /* target broker */);
     }
 
-    public static ByteBuf newConnect(String authMethodName, String authData, int protocolVersion, String libVersion) {
+    public static ByteBuf newConnect(String authMethodName, String authData, String libVersion, String targetBroker) {
+        return newConnect(authMethodName, authData, getCurrentProtocolVersion(), libVersion, targetBroker);
+    }
+
+    public static ByteBuf newConnect(String authMethodName, String authData, int protocolVersion, String libVersion,
+            String targetBroker) {
         CommandConnect.Builder connectBuilder = CommandConnect.newBuilder();
         connectBuilder.setClientVersion(libVersion != null ? libVersion : "Pulsar Client");
         connectBuilder.setAuthMethodName(authMethodName);
@@ -94,7 +97,14 @@ public class Commands {
             connectBuilder.setAuthMethod(AuthMethod.AuthMethodYcaV1);
         }
 
-        connectBuilder.setAuthData(ByteString.copyFromUtf8(authData));
+        if (targetBroker != null) {
+            // When connecting through a proxy, we need to specify which broker do we want to be proxied through
+            connectBuilder.setProxyToBrokerUrl(targetBroker);
+        }
+
+        if (authData != null) {
+            connectBuilder.setAuthData(ByteString.copyFromUtf8(authData));
+        }
         connectBuilder.setProtocolVersion(protocolVersion);
         CommandConnect connect = connectBuilder.build();
         ByteBuf res = serializeWithSize(BaseCommand.newBuilder().setType(Type.CONNECT).setConnect(connect));
@@ -130,16 +140,17 @@ public class Commands {
         return res;
     }
 
-    public static ByteBuf newConnected(CommandConnect cmdConnect) {
+    public static ByteBuf newConnected(int clientProtocolVersion) {
         CommandConnected.Builder connectedBuilder = CommandConnected.newBuilder();
         connectedBuilder.setServerVersion("Pulsar Server");
 
         // If the broker supports a newer version of the protocol, it will anyway advertise the max version that the
         // client supports, to avoid confusing the client.
         int currentProtocolVersion = getCurrentProtocolVersion();
-        int versionToAdvertise = Math.min(currentProtocolVersion, cmdConnect.getProtocolVersion());
+        int versionToAdvertise = Math.min(currentProtocolVersion, clientProtocolVersion);
 
         connectedBuilder.setProtocolVersion(versionToAdvertise);
+
         CommandConnected connected = connectedBuilder.build();
         ByteBuf res = serializeWithSize(BaseCommand.newBuilder().setType(Type.CONNECTED).setConnected(connected));
         connected.recycle();
@@ -430,27 +441,27 @@ public class Commands {
         return res;
     }
 
-
     public static ByteBuf newLookupResponse(String brokerServiceUrl, String brokerServiceUrlTls, boolean authoritative,
-            LookupType response, long requestId) {
-        CommandLookupTopicResponse.Builder connectionBuilder = CommandLookupTopicResponse.newBuilder();
-        connectionBuilder.setBrokerServiceUrl(brokerServiceUrl);
+            LookupType response, long requestId, boolean proxyThroughServiceUrl) {
+        CommandLookupTopicResponse.Builder commandLookupTopicResponseBuilder = CommandLookupTopicResponse.newBuilder();
+        commandLookupTopicResponseBuilder.setBrokerServiceUrl(brokerServiceUrl);
         if (brokerServiceUrlTls != null) {
-            connectionBuilder.setBrokerServiceUrlTls(brokerServiceUrlTls);
+            commandLookupTopicResponseBuilder.setBrokerServiceUrlTls(brokerServiceUrlTls);
         }
-        connectionBuilder.setResponse(response);
-        connectionBuilder.setRequestId(requestId);
-        connectionBuilder.setAuthoritative(authoritative);
+        commandLookupTopicResponseBuilder.setResponse(response);
+        commandLookupTopicResponseBuilder.setRequestId(requestId);
+        commandLookupTopicResponseBuilder.setAuthoritative(authoritative);
+        commandLookupTopicResponseBuilder.setProxyThroughServiceUrl(proxyThroughServiceUrl);
 
-        CommandLookupTopicResponse connectionLookupResponse = connectionBuilder.build();
+        CommandLookupTopicResponse commandLookupTopicResponse = commandLookupTopicResponseBuilder.build();
         ByteBuf res = serializeWithSize(BaseCommand.newBuilder().setType(Type.LOOKUP_RESPONSE)
-                .setLookupTopicResponse(connectionLookupResponse));
-        connectionBuilder.recycle();
-        connectionLookupResponse.recycle();
+                .setLookupTopicResponse(commandLookupTopicResponse));
+        commandLookupTopicResponseBuilder.recycle();
+        commandLookupTopicResponse.recycle();
         return res;
     }
 
-    public static ByteBuf newLookupResponse(ServerError error, String errorMsg, long requestId) {
+    public static ByteBuf newLookupErrorResponse(ServerError error, String errorMsg, long requestId) {
         CommandLookupTopicResponse.Builder connectionBuilder = CommandLookupTopicResponse.newBuilder();
         connectionBuilder.setRequestId(requestId);
         connectionBuilder.setError(error);

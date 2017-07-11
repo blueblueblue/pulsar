@@ -18,8 +18,9 @@ package com.yahoo.pulsar.broker.service;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.yahoo.pulsar.broker.admin.PersistentTopics.getPartitionedTopicMetadata;
 import static com.yahoo.pulsar.broker.lookup.DestinationLookup.lookupDestinationAsync;
-import static com.yahoo.pulsar.common.api.Commands.newLookupResponse;
+import static com.yahoo.pulsar.common.api.Commands.newLookupErrorResponse;
 import static com.yahoo.pulsar.common.api.proto.PulsarApi.ProtocolVersion.v5;
+import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import java.net.SocketAddress;
 import java.util.concurrent.CompletableFuture;
@@ -29,7 +30,6 @@ import java.util.concurrent.TimeUnit;
 import javax.naming.AuthenticationException;
 import javax.net.ssl.SSLSession;
 
-import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -170,7 +170,7 @@ public class ServerCnx extends PulsarHandler {
                             // it should never happen
                             log.warn("[{}] lookup failed with error {}, {}", remoteAddress, topic, ex.getMessage(), ex);
                             ctx.writeAndFlush(
-                                    newLookupResponse(ServerError.ServiceNotReady, ex.getMessage(), requestId));
+                                    newLookupErrorResponse(ServerError.ServiceNotReady, ex.getMessage(), requestId));
                         }
                         lookupSemaphore.release();
                         return null;
@@ -179,7 +179,7 @@ public class ServerCnx extends PulsarHandler {
             if (log.isDebugEnabled()) {
                 log.debug("[{}] Failed lookup due to too many lookup-requets {}", remoteAddress, topic);
             }
-            ctx.writeAndFlush(newLookupResponse(ServerError.TooManyRequests,
+            ctx.writeAndFlush(newLookupErrorResponse(ServerError.TooManyRequests,
                     "Failed due to too many pending lookup requests", requestId));
         }
 
@@ -220,7 +220,7 @@ public class ServerCnx extends PulsarHandler {
                 log.debug("[{}] Failed Partition-Metadata lookup due to too many lookup-requets {}", remoteAddress,
                         topic);
             }
-            ctx.writeAndFlush(newLookupResponse(ServerError.TooManyRequests,
+            ctx.writeAndFlush(newLookupErrorResponse(ServerError.TooManyRequests,
                     "Failed due to too many pending lookup requests", requestId));
         }
     }
@@ -310,7 +310,7 @@ public class ServerCnx extends PulsarHandler {
         if (log.isDebugEnabled()) {
             log.debug("Received CONNECT from {}", remoteAddress);
         }
-        ctx.writeAndFlush(Commands.newConnected(connect));
+        ctx.writeAndFlush(Commands.newConnected(connect.getProtocolVersion()));
         state = State.Connected;
         remoteEndpointProtocolVersion = connect.getProtocolVersion();
         String version = connect.hasClientVersion() ? connect.getClientVersion() : null;
@@ -869,7 +869,7 @@ public class ServerCnx extends PulsarHandler {
     public boolean isBatchMessageCompatibleVersion() {
         return remoteEndpointProtocolVersion >= ProtocolVersion.v4.getNumber();
     }
-    
+
     public String getClientVersion() {
         return clientVersion;
     }

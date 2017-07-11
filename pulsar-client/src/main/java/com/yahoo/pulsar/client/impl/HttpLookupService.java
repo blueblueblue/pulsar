@@ -19,6 +19,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.concurrent.CompletableFuture;
 
+import org.apache.commons.lang3.tuple.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,13 +40,13 @@ class HttpLookupService implements LookupService {
 	}
 
     /**
-     * Calls http-lookup api to find broker-service address which can serve a given topic. 
-     * 
+     * Calls http-lookup api to find broker-service address which can serve a given topic.
+     *
      * @param destination: topic-name
-     * @return broker-socket-address that serves given topic 
+     * @return broker-socket-address that serves given topic
      */
     @SuppressWarnings("deprecation")
-    public CompletableFuture<InetSocketAddress> getBroker(DestinationName destination) {
+    public CompletableFuture<Pair<InetSocketAddress, InetSocketAddress>> getBroker(DestinationName destination) {
         return httpClient.get(BasePath + destination.getLookupName(), LookupData.class).thenCompose(lookupData -> {
             // Convert LookupData into as SocketAddress, handling exceptions
         	URI uri = null;
@@ -59,7 +60,9 @@ class HttpLookupService implements LookupService {
                     }
                     uri = new URI(serviceUrl);
                 }
-                return CompletableFuture.completedFuture(new InetSocketAddress(uri.getHost(), uri.getPort()));
+
+                InetSocketAddress brokerAddress = new InetSocketAddress(uri.getHost(), uri.getPort());
+                return CompletableFuture.completedFuture(Pair.of(brokerAddress, brokerAddress));
             } catch (Exception e) {
                 // Failed to parse url
             	log.warn("[{}] Lookup Failed due to invalid url {}, {}", destination, uri, e.getMessage());
@@ -67,15 +70,15 @@ class HttpLookupService implements LookupService {
             }
         });
     }
-    
+
     public CompletableFuture<PartitionedTopicMetadata> getPartitionedTopicMetadata(DestinationName destination) {
     	return httpClient.get(String.format("admin/%s/partitions", destination.getLookupName()),
                 PartitionedTopicMetadata.class);
     }
-    
+
     public String getServiceUrl() {
     	return httpClient.url.toString();
     }
-    
+
     private static final Logger log = LoggerFactory.getLogger(HttpLookupService.class);
 }

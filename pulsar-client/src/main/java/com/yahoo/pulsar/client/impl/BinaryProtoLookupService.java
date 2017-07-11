@@ -21,17 +21,20 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.concurrent.CompletableFuture;
 
+import org.apache.commons.lang3.tuple.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.yahoo.pulsar.client.api.PulsarClientException;
 import com.yahoo.pulsar.common.api.Commands;
+import com.yahoo.pulsar.common.api.proto.PulsarApi.CommandLookupTopicResponse;
+import com.yahoo.pulsar.common.api.proto.PulsarApi.CommandLookupTopicResponse.LookupType;
 import com.yahoo.pulsar.common.naming.DestinationName;
 import com.yahoo.pulsar.common.partition.PartitionedTopicMetadata;
 
 import io.netty.buffer.ByteBuf;
 
-class BinaryProtoLookupService implements LookupService {
+public class BinaryProtoLookupService implements LookupService {
 
     private final PulsarClientImpl client;
     protected final InetSocketAddress serviceAddress;
@@ -50,29 +53,28 @@ class BinaryProtoLookupService implements LookupService {
             throw new PulsarClientException.InvalidServiceURL(e);
         }
     }
-    
+
     /**
      * Calls broker binaryProto-lookup api to find broker-service address which can serve a given topic.
-     * 
+     *
      * @param destination: topic-name
      * @return broker-socket-address that serves given topic
      */
-    public CompletableFuture<InetSocketAddress> getBroker(DestinationName destination) {
+    public CompletableFuture<Pair<InetSocketAddress, InetSocketAddress>> getBroker(DestinationName destination) {
         return findBroker(serviceAddress, false, destination);
     }
-    
+
     /**
      * calls broker binaryProto-lookup api to get metadata of partitioned-topic.
-     * 
+     *
      */
     public CompletableFuture<PartitionedTopicMetadata> getPartitionedTopicMetadata(DestinationName destination) {
         return getPartitionedTopicMetadata(serviceAddress, destination);
     }
-    
-    
-    private CompletableFuture<InetSocketAddress> findBroker(InetSocketAddress socketAddress, boolean authoritative,
-            DestinationName destination) {
-        CompletableFuture<InetSocketAddress> addressFuture = new CompletableFuture<InetSocketAddress>();
+
+    private CompletableFuture<Pair<InetSocketAddress, InetSocketAddress>> findBroker(InetSocketAddress socketAddress,
+            boolean authoritative, DestinationName destination) {
+        CompletableFuture<Pair<InetSocketAddress, InetSocketAddress>> addressFuture = new CompletableFuture<>();
 
         client.getCnxPool().getConnection(socketAddress).thenAccept(clientCnx -> {
             long requestId = client.newRequestId();
@@ -87,13 +89,14 @@ class BinaryProtoLookupService implements LookupService {
                         String serviceUrl = lookupDataResult.brokerUrl;
                         uri = new URI(serviceUrl);
                     }
+
                     InetSocketAddress responseBrokerAddress = new InetSocketAddress(uri.getHost(), uri.getPort());
 
                     // (2) redirect to given address if response is: redirect
                     if (lookupDataResult.redirect) {
                         findBroker(responseBrokerAddress, lookupDataResult.authoritative, destination)
-                                .thenAccept(brokerAddress -> {
-                                    addressFuture.complete(brokerAddress);
+                                .thenAccept(addressPair -> {
+                                    addressFuture.complete(addressPair);
                                 }).exceptionally((lookupException) -> {
                                     // lookup failed
                                     log.warn("[{}] lookup failed : {}", destination.toString(),
@@ -103,7 +106,13 @@ class BinaryProtoLookupService implements LookupService {
                                 });
                     } else {
                         // (3) received correct broker to connect
-                        addressFuture.complete(responseBrokerAddress);
+                        if (lookupDataResult.proxyThroughServiceUrl) {
+                            // Connect through proxy
+                            addressFuture.complete(Pair.of(responseBrokerAddress, serviceAddress));
+                        } else {
+                            // Normal result with direct connection to broker
+                            addressFuture.complete(Pair.of(responseBrokerAddress, responseBrokerAddress));
+                        }
                     }
 
                 } catch (Exception parseUrlException) {
@@ -125,8 +134,8 @@ class BinaryProtoLookupService implements LookupService {
         });
         return addressFuture;
     }
-    
-    
+
+
     private CompletableFuture<PartitionedTopicMetadata> getPartitionedTopicMetadata(InetSocketAddress socketAddress,
             DestinationName destination) {
 
@@ -156,30 +165,37 @@ class BinaryProtoLookupService implements LookupService {
 
         return partitionFuture;
     }
-    
+
     public String getServiceUrl() {
     	return serviceAddress.toString();
     }
 
-    static class LookupDataResult {
+    public static class LookupDataResult {
 
-        private String brokerUrl;
-        private String brokerUrlTls;
-        private int partitions;
-        private boolean authoritative;
-        private boolean redirect;
+        public final String brokerUrl;
+        public final String brokerUrlTls;
+        public final int partitions;
+        public final boolean authoritative;
+        public final boolean proxyThroughServiceUrl;
+        public final boolean redirect;
 
-        public LookupDataResult(String brokerUrl, String brokerUrlTls, boolean redirect, boolean authoritative) {
-            super();
-            this.brokerUrl = brokerUrl;
-            this.brokerUrlTls = brokerUrlTls;
-            this.authoritative = authoritative;
-            this.redirect = redirect;
+        public LookupDataResult(CommandLookupTopicResponse result) {
+            this.brokerUrl = result.getBrokerServiceUrl();
+            this.brokerUrlTls = result.getBrokerServiceUrlTls();
+            this.authoritative = result.getAuthoritative();
+            this.redirect = result.getResponse() == LookupType.Redirect;
+            this.proxyThroughServiceUrl = result.getProxyThroughServiceUrl();
+            this.partitions = -1;
         }
-        
+
         public LookupDataResult(int partitions) {
             super();
             this.partitions = partitions;
+            this.brokerUrl = null;
+            this.brokerUrlTls = null;
+            this.authoritative = false;
+            this.proxyThroughServiceUrl = false;
+            this.redirect = false;
         }
 
     }

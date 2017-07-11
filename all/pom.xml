@@ -45,6 +45,12 @@
 
     <dependency>
       <groupId>com.yahoo.pulsar</groupId>
+      <artifactId>pulsar-proxy</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>com.yahoo.pulsar</groupId>
       <artifactId>pulsar-client-tools</artifactId>
       <version>${project.version}</version>
     </dependency>

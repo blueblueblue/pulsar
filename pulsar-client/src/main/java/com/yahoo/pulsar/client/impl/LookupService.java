@@ -18,6 +18,8 @@ package com.yahoo.pulsar.client.impl;
 import java.net.InetSocketAddress;
 import java.util.concurrent.CompletableFuture;
 
+import org.apache.commons.lang3.tuple.Pair;
+
 import com.yahoo.pulsar.common.naming.DestinationName;
 import com.yahoo.pulsar.common.partition.PartitionedTopicMetadata;
 
@@ -30,31 +32,31 @@ import com.yahoo.pulsar.common.partition.PartitionedTopicMetadata;
  * <li><b>Partitioned-topic-Metadata-lookup:</b> lookup to find
  * PartitionedMetadata for a given topic</li>
  * </ul>
- * 
+ *
  */
 interface LookupService {
 
-	/**
-	 * Calls broker lookup-api to get broker {@link InetSocketAddress} which serves namespacebundle that
-	 * contains given topic.
-	 * 
-	 * @param destination:
-	 *            topic-name
-	 * @return broker-socket-address that serves given topic
-	 */
-	public CompletableFuture<InetSocketAddress> getBroker(DestinationName topic);
-    
+    /**
+     * Calls broker lookup-api to get broker {@link InetSocketAddress} which serves namespace bundle that contains given
+     * topic.
+     *
+     * @param destination:
+     *            topic-name
+     * @return a pair of addresses, representing the logical and physical address of the broker that serves given topic
+     */
+    public CompletableFuture<Pair<InetSocketAddress, InetSocketAddress>> getBroker(DestinationName topic);
+
 	/**
 	 * Returns {@link PartitionedTopicMetadata} for a given topic.
-	 * 
+	 *
 	 * @param destination : topic-name
 	 * @return
 	 */
 	public CompletableFuture<PartitionedTopicMetadata> getPartitionedTopicMetadata(DestinationName destination);
-	
+
 	/**
 	 * Returns broker-service lookup api url.
-	 * 
+	 *
 	 * @return
 	 */
 	public String getServiceUrl();
