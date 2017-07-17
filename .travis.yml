@@ -31,6 +31,7 @@ deploy:
     skip_cleanup: true
     script: mvn install deploy -Prelease -DskipTests --settings .travis/settings.xml
     on:
+      repo: apache/incubator-pulsar
       tags: true
   -
     provider: releases
@@ -40,5 +41,5 @@ deploy:
     file_glob: true
     file: "all/target/pulsar-*.tar.gz"
     on:
-      repo: yahoo/pulsar
+      repo: apache/incubator-pulsar
       tags: true
