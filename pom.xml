@@ -33,7 +33,7 @@
   <groupId>org.apache.pulsar</groupId>
   <artifactId>pulsar</artifactId>
 
-  <version>1.22.0-incubating-SNAPSHOT</version>
+  <version>1.22.0-streamlio-1</version>
 
   <name>Pulsar</name>
   <description>Pulsar is a distributed pub-sub messaging platform with a very
@@ -108,7 +108,7 @@ flexible messaging model and an intuitive client API.</description>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
-    <bookkeeper.version>4.3.1.85-yahoo</bookkeeper.version>
+    <bookkeeper.version>4.3.1.85-streamlio</bookkeeper.version>
     <zookeeper.version>3.4.10</zookeeper.version>
     <netty.version>4.1.19.Final</netty.version>
     <storm.version>1.0.5</storm.version>
@@ -899,6 +899,10 @@ flexible messaging model and an intuitive client API.</description>
     <repository>
       <id>bookkeeper-yahoo-mvn-repo</id>
       <url>https://raw.githubusercontent.com/yahoo/bookkeeper/mvn-repo</url>
+    </repository>
+    <repository>
+      <id>pulsar-streamlio-mvn-repo</id>
+      <url>https://raw.githubusercontent.com/streamlio/pulsar-mvn/master</url>
     </repository>
     <repository>
       <snapshots>
