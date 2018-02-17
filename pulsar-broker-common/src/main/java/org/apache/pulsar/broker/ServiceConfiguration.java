@@ -18,13 +18,13 @@
  */
 package org.apache.pulsar.broker;
 
-import java.lang.reflect.Field;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 
+import org.apache.pulsar.broker.authorization.PulsarAuthorizationProvider;
 import org.apache.pulsar.common.configuration.FieldContext;
 import org.apache.pulsar.common.configuration.PulsarConfiguration;
 
@@ -169,6 +169,21 @@ public class ServiceConfiguration implements PulsarConfiguration {
     // Enable to run bookie autorecovery along with broker
     private boolean enableRunBookieAutoRecoveryTogether = false;
 
+    // Max number of producers allowed to connect to topic. Once this limit reaches, Broker will reject new producers
+    // until the number of connected producers decrease.
+    // Using a value of 0, is disabling maxProducersPerTopic-limit check.
+    private int maxProducersPerTopic = 0;
+
+    // Max number of consumers allowed to connect to topic. Once this limit reaches, Broker will reject new consumers
+    // until the number of connected consumers decrease.
+    // Using a value of 0, is disabling maxConsumersPerTopic-limit check.
+    private int maxConsumersPerTopic = 0;
+
+    // Max number of consumers allowed to connect to subscription. Once this limit reaches, Broker will reject new consumers
+    // until the number of connected consumers decrease.
+    // Using a value of 0, is disabling maxConsumersPerSubscription-limit check.
+    private int maxConsumersPerSubscription = 0;
+
     /***** --- TLS --- ****/
     // Enable TLS
     private boolean tlsEnabled = false;
@@ -180,7 +195,13 @@ public class ServiceConfiguration implements PulsarConfiguration {
     private String tlsTrustCertsFilePath = "";
     // Accept untrusted TLS certificate from client
     private boolean tlsAllowInsecureConnection = false;
-
+    // Specify the tls protocols the broker will use to negotiate during TLS Handshake.
+    // Example:- [TLSv1.2, TLSv1.1, TLSv1]
+    private Set<String> tlsProtocols = Sets.newTreeSet();
+    // Specify the tls cipher the broker will use to negotiate during TLS Handshake.
+    // Example:- [TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256]
+    private Set<String> tlsCiphers = Sets.newTreeSet();
+    
     /***** --- Authentication --- ****/
     // Enable authentication
     private boolean authenticationEnabled = false;
@@ -189,10 +210,20 @@ public class ServiceConfiguration implements PulsarConfiguration {
 
     // Enforce authorization
     private boolean authorizationEnabled = false;
+    // Authorization provider fully qualified class-name
+    private String authorizationProvider = PulsarAuthorizationProvider.class.getName();
 
     // Role names that are treated as "super-user", meaning they will be able to
     // do all admin operations and publish/consume from all topics
     private Set<String> superUserRoles = Sets.newTreeSet();
+
+    // Role names that are treated as "proxy roles". If the broker sees a request with
+    // role as proxyRoles - it will demand to see the original client role or certificate.
+    private Set<String> proxyRoles = Sets.newTreeSet();
+
+    // If this flag is set then the broker authenticates the original Auth data
+    // else it just accepts the originalPrincipal and authorizes it (if required). 
+    private boolean authenticateOriginalAuthData = false;
 
     // Allow wildcard matching in authorization
     // (wildcard matching only applicable if wildcard-char:
@@ -349,6 +380,9 @@ public class ServiceConfiguration implements PulsarConfiguration {
     @FieldContext(dynamic = true)
     private String loadManagerClassName = "org.apache.pulsar.broker.loadbalance.impl.ModularLoadManagerImpl";
 
+    // Option to override the auto-detected network interfaces max speed
+    private Double loadBalancerOverrideBrokerNicSpeedGbps;
+
     /**** --- Replication --- ****/
     // Enable replication metrics
     private boolean replicationMetricsEnabled = false;
@@ -388,7 +422,6 @@ public class ServiceConfiguration implements PulsarConfiguration {
     /**** --- Metrics --- ****/
     // If true, export topic level metrics otherwise namespace level
     private boolean exposeTopicLevelMetricsInPrometheus = true;
-
 
     public String getZookeeperServers() {
         return zookeeperServers;
@@ -725,6 +758,30 @@ public class ServiceConfiguration implements PulsarConfiguration {
         this.enableRunBookieAutoRecoveryTogether = enableRunBookieAutoRecoveryTogether;
     }
 
+    public int getMaxProducersPerTopic() {
+        return maxProducersPerTopic;
+    }
+
+    public void setMaxProducersPerTopic(int maxProducersPerTopic) {
+        this.maxProducersPerTopic = maxProducersPerTopic;
+    }
+
+    public int getMaxConsumersPerTopic() {
+        return maxConsumersPerTopic;
+    }
+
+    public void setMaxConsumersPerTopic(int maxConsumersPerTopic) {
+        this.maxConsumersPerTopic = maxConsumersPerTopic;
+    }
+
+    public int getMaxConsumersPerSubscription() {
+        return maxConsumersPerSubscription;
+    }
+
+    public void setMaxConsumersPerSubscription(int maxConsumersPerSubscription) {
+        this.maxConsumersPerSubscription = maxConsumersPerSubscription;
+    }
+
     public boolean isTlsEnabled() {
         return tlsEnabled;
     }
@@ -773,6 +830,14 @@ public class ServiceConfiguration implements PulsarConfiguration {
         this.authenticationEnabled = authenticationEnabled;
     }
 
+    public String getAuthorizationProvider() {
+        return authorizationProvider;
+    }
+
+    public void setAuthorizationProvider(String authorizationProvider) {
+        this.authorizationProvider = authorizationProvider;
+    }
+
     public void setAuthenticationProviders(Set<String> providersClassNames) {
         authenticationProviders = providersClassNames;
     }
@@ -792,7 +857,15 @@ public class ServiceConfiguration implements PulsarConfiguration {
     public Set<String> getSuperUserRoles() {
         return superUserRoles;
     }
-
+ 
+    public Set<String> getProxyRoles() {
+        return proxyRoles;
+    }
+    
+    public void setProxyRoles(Set<String> proxyRoles) {
+        this.proxyRoles = proxyRoles;
+    }
+    
     public boolean getAuthorizationAllowWildcardsMatching() {
         return authorizationAllowWildcardsMatching;
     }
@@ -1218,6 +1291,14 @@ public class ServiceConfiguration implements PulsarConfiguration {
         return this.loadBalancerNamespaceMaximumBundles;
     }
 
+    public Optional<Double> getLoadBalancerOverrideBrokerNicSpeedGbps() {
+        return Optional.ofNullable(loadBalancerOverrideBrokerNicSpeedGbps);
+    }
+
+    public void setLoadBalancerOverrideBrokerNicSpeedGbps(double loadBalancerOverrideBrokerNicSpeedGbps) {
+        this.loadBalancerOverrideBrokerNicSpeedGbps = loadBalancerOverrideBrokerNicSpeedGbps;
+    }
+
     public boolean isReplicationMetricsEnabled() {
         return replicationMetricsEnabled;
     }
@@ -1354,5 +1435,29 @@ public class ServiceConfiguration implements PulsarConfiguration {
 
     public void setExposeTopicLevelMetricsInPrometheus(boolean exposeTopicLevelMetricsInPrometheus) {
         this.exposeTopicLevelMetricsInPrometheus = exposeTopicLevelMetricsInPrometheus;
+    }
+    
+    public boolean authenticateOriginalAuthData() {
+        return authenticateOriginalAuthData;
+    }
+
+    public void setAuthenticateOriginalAuthData(boolean authenticateOriginalAuthData) {
+        this.authenticateOriginalAuthData = authenticateOriginalAuthData;
+    }
+    
+    public Set<String> getTlsProtocols() {
+        return tlsProtocols;
+    }
+
+    public void setTlsProtocols(Set<String> tlsProtocols) {
+        this.tlsProtocols = tlsProtocols;
+    }
+
+    public Set<String> getTlsCiphers() {
+        return tlsCiphers;
+    }
+
+    public void setTlsCiphers(Set<String> tlsCiphers) {
+        this.tlsCiphers = tlsCiphers;
     }
 }

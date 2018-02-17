@@ -37,7 +37,14 @@ Release | Link | Crypto files
 Binary | [pulsar-{{ site.current_version }}-bin.tar.gz]({{ mirror_url }}-bin.tar.gz) | [asc]({{ dist_url }}-bin.tar.gz.asc), [md5]({{ dist_url }}-bin.tar.gz.md5), [sha512]({{ dist_url }}-bin.tar.gz.sha512)
 Source | [pulsar-{{ site.current_version }}-src.tar.gz]({{ mirror_url }}-src.tar.gz) | [asc]({{ dist_url }}-src.tar.gz.asc), [md5]({{ dist_url }}-src.tar.gz.md5), [sha512]({{ dist_url }}-src.tar.gz.sha512)
 
-{% include admonition.html type="info" content='You can download the [KEYS](http://www.apache.org/dev/release-signing#keys-policy) file for Pulsar <a href="https://www.apache.org/dist/incubator/pulsar/KEYS" download>here</a>.' %}
+### Release Integrity
+
+You must [verify](https://www.apache.org/info/verification.html) the integrity of the downloaded files.
+We provide OpenPGP signatures for every release file. This signature should be matched against the
+[KEYS](https://www.apache.org/dist/incubator/pulsar/KEYS) file which contains the OpenPGP keys of
+Pulsar's Release Managers. We also provide `MD5` and `SHA-512` checksums for every release file.
+After you download the file, you should calculate a checksum for your download, and make sure it is
+the same as ours.
 
 ### Release notes for the {{ site.current_version }} release
 
@@ -58,14 +65,14 @@ Client guide | API docs
 
 {% if site.archived_releases %}
 {% capture archive_root_url %}http://archive.apache.org/dist/incubator/pulsar{% endcapture %}
+{% capture archive_root_https_url %}https://archive.apache.org/dist/incubator/pulsar{% endcapture %}
 {% capture release_notes_root_url %}https://github.com/apache/incubator-pulsar/releases/tag{% endcapture %}
 
 ### Older releases
 
-Release | Download | Crypto files | Release notes
+Release | Binary | Source | Release notes
 :-------|:---------|:-------------|:-------------
 {% for version in site.archived_releases
-%} {{ version }} binary | [pulsar-{{version}}-bin.tar.gz]({{ archive_root_url }}/pulsar-{{ version }}/apache-pulsar-{{ version }}-bin.tar.gz) | [asc]({{ archive_root_url }}/pulsar-{{ version }}/apache-pulsar-{{ version }}-bin.tar.gz.asc), [md5]({{ archive_root_url }}/pulsar-{{ version }}/apache-pulsar-{{ version }}-bin.tar.gz.md5), [sha]({{ archive_root_url }}/pulsar-{{ version }}/apache-pulsar-{{ version }}-bin.tar.gz.sha) | [Release notes v{{ version }}]({{ release_notes_root_url }}/v{{ version }})
-{{ version }} source | [pulsar-{{ version }}-src.tar.gz]({{ archive_root_url }}/pulsar-{{ version }}/apache-pulsar-{{ version }}-src.tar.gz) | [asc]({{ archive_root_url }}/pulsar-{{ version }}/apache-pulsar-{{ version }}-src.tar.gz.asc), [md5]({{ archive_root_url }}/pulsar-{{ version }}/apache-pulsar-{{ version }}-src.tar.gz.md5), [sha]({{ archive_root_url }}/pulsar-{{ version }}/apache-pulsar-{{ version }}-src.tar.gz.sha)
+%} {{ version }} | [pulsar-{{version}}-bin.tar.gz]({{ archive_root_url }}/pulsar-{{ version }}/apache-pulsar-{{ version }}-bin.tar.gz) - [asc]({{ archive_root_https_url }}/pulsar-{{ version }}/apache-pulsar-{{ version }}-bin.tar.gz.asc), [md5]({{ archive_root_https_url }}/pulsar-{{ version }}/apache-pulsar-{{ version }}-bin.tar.gz.md5), [sha]({{ archive_root_https_url }}/pulsar-{{ version }}/apache-pulsar-{{ version }}-bin.tar.gz.sha) | [pulsar-{{ version }}-src.tar.gz]({{ archive_root_url }}/pulsar-{{ version }}/apache-pulsar-{{ version }}-src.tar.gz) - [asc]({{ archive_root_https_url }}/pulsar-{{ version }}/apache-pulsar-{{ version }}-src.tar.gz.asc), [md5]({{ archive_root_https_url }}/pulsar-{{ version }}/apache-pulsar-{{ version }}-src.tar.gz.md5), [sha]({{ archive_root_https_url }}/pulsar-{{ version }}/apache-pulsar-{{ version }}-src.tar.gz.sha) | [Release notes v{{ version }}]({{ release_notes_root_url }}/v{{ version }})
 {% endfor %}
 {% endif %}
