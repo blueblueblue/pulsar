@@ -18,9 +18,10 @@
  */
 package org.apache.pulsar.common.api;
 
-import static org.apache.pulsar.checksum.utils.Crc32cChecksum.computeChecksum;
-import static org.apache.pulsar.checksum.utils.Crc32cChecksum.resumeChecksum;
+import static com.scurrilous.circe.checksum.Crc32cIntChecksum.computeChecksum;
+import static com.scurrilous.circe.checksum.Crc32cIntChecksum.resumeChecksum;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.protobuf.ByteString;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.PooledByteBufAllocator;
@@ -45,6 +46,8 @@ import org.apache.pulsar.common.api.proto.PulsarApi.CommandConsumerStatsResponse
 import org.apache.pulsar.common.api.proto.PulsarApi.CommandError;
 import org.apache.pulsar.common.api.proto.PulsarApi.CommandFlow;
 import org.apache.pulsar.common.api.proto.PulsarApi.CommandGetLastMessageId;
+import org.apache.pulsar.common.api.proto.PulsarApi.CommandGetTopicsOfNamespace;
+import org.apache.pulsar.common.api.proto.PulsarApi.CommandGetTopicsOfNamespaceResponse;
 import org.apache.pulsar.common.api.proto.PulsarApi.CommandLookupTopic;
 import org.apache.pulsar.common.api.proto.PulsarApi.CommandLookupTopicResponse;
 import org.apache.pulsar.common.api.proto.PulsarApi.CommandLookupTopicResponse.LookupType;
@@ -126,33 +129,6 @@ public class Commands {
         if (originalAuthMethod != null) {
             connectBuilder.setOriginalAuthMethod(originalAuthMethod);
         }
-        connectBuilder.setProtocolVersion(protocolVersion);
-        CommandConnect connect = connectBuilder.build();
-        ByteBuf res = serializeWithSize(BaseCommand.newBuilder().setType(Type.CONNECT).setConnect(connect));
-        connect.recycle();
-        connectBuilder.recycle();
-        return res;
-    }
-
-    /**
-     * @deprecated AuthMethod has been deprecated. Use {@link #newConnect(String authMethodName, String authData)}
-     *             instead.
-     */
-    @Deprecated
-    public static ByteBuf newConnect(AuthMethod authMethod, String authData) {
-        return newConnect(authMethod, authData, getCurrentProtocolVersion());
-    }
-
-    /**
-     * @deprecated AuthMethod has been deprecated. Use
-     *             {@link #newConnect(String authMethodName, String authData, int protocolVersion)} instead.
-     */
-    @Deprecated
-    public static ByteBuf newConnect(AuthMethod authMethod, String authData, int protocolVersion) {
-        CommandConnect.Builder connectBuilder = CommandConnect.newBuilder();
-        connectBuilder.setClientVersion("Pulsar Client");
-        connectBuilder.setAuthMethod(authMethod);
-        connectBuilder.setAuthData(ByteString.copyFromUtf8(authData));
         connectBuilder.setProtocolVersion(protocolVersion);
         CommandConnect connect = connectBuilder.build();
         ByteBuf res = serializeWithSize(BaseCommand.newBuilder().setType(Type.CONNECT).setConnect(connect));
@@ -619,6 +595,34 @@ public class Commands {
         return res;
     }
 
+    public static ByteBuf newGetTopicsOfNamespaceRequest(String namespace, long requestId) {
+        CommandGetTopicsOfNamespace.Builder topicsBuilder = CommandGetTopicsOfNamespace.newBuilder();
+        topicsBuilder.setNamespace(namespace).setRequestId(requestId);
+
+        CommandGetTopicsOfNamespace topicsCommand = topicsBuilder.build();
+        ByteBuf res = serializeWithSize(
+            BaseCommand.newBuilder().setType(Type.GET_TOPICS_OF_NAMESPACE).setGetTopicsOfNamespace(topicsCommand));
+        topicsBuilder.recycle();
+        topicsCommand.recycle();
+        return res;
+    }
+
+    public static ByteBuf newGetTopicsOfNamespaceResponse(List<String> topics, long requestId) {
+        CommandGetTopicsOfNamespaceResponse.Builder topicsResponseBuilder =
+            CommandGetTopicsOfNamespaceResponse.newBuilder();
+
+        topicsResponseBuilder.setRequestId(requestId).addAllTopics(topics);
+
+        CommandGetTopicsOfNamespaceResponse topicsOfNamespaceResponse = topicsResponseBuilder.build();
+        ByteBuf res = serializeWithSize(BaseCommand.newBuilder()
+            .setType(Type.GET_TOPICS_OF_NAMESPACE_RESPONSE)
+            .setGetTopicsOfNamespaceResponse(topicsOfNamespaceResponse));
+
+        topicsResponseBuilder.recycle();
+        topicsOfNamespaceResponse.recycle();
+        return res;
+    }
+
     private final static ByteBuf cmdPing;
 
     static {
@@ -672,7 +676,8 @@ public class Commands {
         return res;
     }
 
-    private static ByteBuf serializeWithSize(BaseCommand.Builder cmdBuilder) {
+    @VisibleForTesting
+    public static ByteBuf serializeWithSize(BaseCommand.Builder cmdBuilder) {
         // / Wire format
         // [TOTAL_SIZE] [CMD_SIZE][CMD]
         BaseCommand cmd = cmdBuilder.build();
@@ -911,7 +916,8 @@ public class Commands {
         return (ByteBufPair) ByteBufPair.get(headers, metadataAndPayload);
     }
 
-    private static int getCurrentProtocolVersion() {
+    @VisibleForTesting
+    public static int getCurrentProtocolVersion() {
         // Return the last ProtocolVersion enum value
         return ProtocolVersion.values()[ProtocolVersion.values().length - 1].getNumber();
     }

@@ -18,6 +18,7 @@
  */
 package org.apache.pulsar.broker.service;
 
+import static org.apache.pulsar.broker.auth.MockedPulsarServiceBaseTest.createMockBookKeeper;
 import static org.apache.pulsar.broker.auth.MockedPulsarServiceBaseTest.createMockZooKeeper;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyObject;
@@ -71,7 +72,7 @@ import org.apache.pulsar.common.api.proto.PulsarApi.BaseCommand;
 import org.apache.pulsar.common.api.proto.PulsarApi.CommandActiveConsumerChange;
 import org.apache.pulsar.common.api.proto.PulsarApi.CommandSubscribe.SubType;
 import org.apache.pulsar.common.api.proto.PulsarApi.ProtocolVersion;
-import org.apache.pulsar.common.naming.DestinationName;
+import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.naming.NamespaceBundle;
 import org.apache.pulsar.common.policies.data.Policies;
 import org.apache.pulsar.common.util.protobuf.ByteBufCodedInputStream;
@@ -111,6 +112,7 @@ public class PersistentDispatcherFailoverConsumerTest {
 
         ZooKeeper mockZk = createMockZooKeeper();
         doReturn(mockZk).when(pulsar).getZkClient();
+        doReturn(createMockBookKeeper(mockZk)).when(pulsar).getBookKeeperClient();
 
         configCacheService = mock(ConfigurationCacheService.class);
         @SuppressWarnings("unchecked")
@@ -173,7 +175,7 @@ public class PersistentDispatcherFailoverConsumerTest {
         NamespaceService nsSvc = mock(NamespaceService.class);
         doReturn(nsSvc).when(pulsar).getNamespaceService();
         doReturn(true).when(nsSvc).isServiceUnitOwned(any(NamespaceBundle.class));
-        doReturn(true).when(nsSvc).isServiceUnitActive(any(DestinationName.class));
+        doReturn(true).when(nsSvc).isServiceUnitActive(any(TopicName.class));
 
         setupMLAsyncCallbackMocks();
 
@@ -407,7 +409,7 @@ public class PersistentDispatcherFailoverConsumerTest {
         // 11. With only one consumer, unsubscribe is allowed
         assertTrue(pdfc.canUnsubscribe(consumer1));
     }
-    
+
     @Test
     public void testMultipleDispatcherGetNextConsumerWithDifferentPriorityLevel() throws Exception {
 
@@ -559,14 +561,15 @@ public class PersistentDispatcherFailoverConsumerTest {
         Assert.assertEquals(getNextConsumer(dispatcher), null);
     }
 
+    @SuppressWarnings("unchecked")
     private Consumer getNextConsumer(PersistentDispatcherMultipleConsumers dispatcher) throws Exception {
-        
+
         Consumer consumer = dispatcher.getNextConsumer();
-        
+
         if (consumer != null) {
             Field field = Consumer.class.getDeclaredField("MESSAGE_PERMITS_UPDATER");
             field.setAccessible(true);
-            AtomicIntegerFieldUpdater<Consumer> messagePermits = (AtomicIntegerFieldUpdater) field.get(consumer);
+            AtomicIntegerFieldUpdater<Consumer> messagePermits = (AtomicIntegerFieldUpdater<Consumer>) field.get(consumer);
             messagePermits.decrementAndGet(consumer);
             return consumer;
         }

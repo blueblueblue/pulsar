@@ -20,16 +20,11 @@ package org.apache.pulsar.client.impl;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static com.scurrilous.circe.checksum.Crc32cIntChecksum.computeChecksum;
 import static java.lang.String.format;
-import static org.apache.pulsar.checksum.utils.Crc32cChecksum.computeChecksum;
 import static org.apache.pulsar.common.api.Commands.hasChecksum;
 import static org.apache.pulsar.common.api.Commands.readChecksum;
 
-import com.google.common.collect.Iterables;
-import io.netty.buffer.ByteBuf;
-import io.netty.util.Timeout;
-import io.netty.util.concurrent.Future;
-import io.netty.util.concurrent.GenericFutureListener;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.BitSet;
@@ -52,13 +47,16 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
+
 import org.apache.pulsar.client.api.Consumer;
-import org.apache.pulsar.client.api.ConsumerConfiguration;
 import org.apache.pulsar.client.api.ConsumerCryptoFailureAction;
+import org.apache.pulsar.client.api.ConsumerStats;
 import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.MessageId;
 import org.apache.pulsar.client.api.PulsarClientException;
+import org.apache.pulsar.client.api.Schema;
 import org.apache.pulsar.client.api.SubscriptionType;
+import org.apache.pulsar.client.impl.conf.ConsumerConfigurationData;
 import org.apache.pulsar.common.api.Commands;
 import org.apache.pulsar.common.api.PulsarDecoder;
 import org.apache.pulsar.common.api.proto.PulsarApi;
@@ -74,15 +72,24 @@ import org.apache.pulsar.common.util.FutureUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class ConsumerImpl extends ConsumerBase {
+import com.google.common.collect.Iterables;
+
+import io.netty.buffer.ByteBuf;
+import io.netty.util.Timeout;
+import io.netty.util.concurrent.Future;
+import io.netty.util.concurrent.GenericFutureListener;
+
+public class ConsumerImpl<T> extends ConsumerBase<T> {
     private static final int MAX_REDELIVER_UNACKNOWLEDGED = 1000;
 
     private final long consumerId;
 
     // Number of messages that have delivered to the application. Every once in a while, this number will be sent to the
     // broker to notify that we are ready to get (and store in the incoming messages queue) more messages
+    @SuppressWarnings("rawtypes")
     private static final AtomicIntegerFieldUpdater<ConsumerImpl> AVAILABLE_PERMITS_UPDATER = AtomicIntegerFieldUpdater
             .newUpdater(ConsumerImpl.class, "availablePermits");
+    @SuppressWarnings("unused")
     private volatile int availablePermits = 0;
 
     private MessageId lastDequeuedMessage = MessageId.earliest;
@@ -103,7 +110,7 @@ public class ConsumerImpl extends ConsumerBase {
     private final UnAckedMessageTracker unAckedMessageTracker;
     private final ConcurrentNavigableMap<MessageIdImpl, BitSet> batchMessageAckTracker;
 
-    protected final ConsumerStats stats;
+    protected final ConsumerStatsRecorder stats;
     private final int priorityLevel;
     private final SubscriptionMode subscriptionMode;
     private BatchMessageIdImpl startMessageId;
@@ -125,16 +132,15 @@ public class ConsumerImpl extends ConsumerBase {
         NonDurable
     }
 
-    ConsumerImpl(PulsarClientImpl client, String topic, String subscription, ConsumerConfiguration conf,
-            ExecutorService listenerExecutor, int partitionIndex, CompletableFuture<Consumer> subscribeFuture) {
-        this(client, topic, subscription, conf, listenerExecutor, partitionIndex, subscribeFuture,
-                SubscriptionMode.Durable, null);
+    ConsumerImpl(PulsarClientImpl client, String topic, ConsumerConfigurationData<T> conf,
+            ExecutorService listenerExecutor, int partitionIndex, CompletableFuture<Consumer<T>> subscribeFuture, Schema<T> schema) {
+        this(client, topic, conf, listenerExecutor, partitionIndex, subscribeFuture, SubscriptionMode.Durable, null, schema);
     }
 
-    ConsumerImpl(PulsarClientImpl client, String topic, String subscription, ConsumerConfiguration conf,
-            ExecutorService listenerExecutor, int partitionIndex, CompletableFuture<Consumer> subscribeFuture,
-            SubscriptionMode subscriptionMode, MessageId startMessageId) {
-        super(client, topic, subscription, conf, conf.getReceiverQueueSize(), listenerExecutor, subscribeFuture);
+    ConsumerImpl(PulsarClientImpl client, String topic, ConsumerConfigurationData<T> conf,
+                 ExecutorService listenerExecutor, int partitionIndex, CompletableFuture<Consumer<T>> subscribeFuture,
+                 SubscriptionMode subscriptionMode, MessageId startMessageId, Schema<T> schema) {
+        super(client, topic, conf, conf.getReceiverQueueSize(), listenerExecutor, subscribeFuture, schema);
         this.consumerId = client.newConsumerId();
         this.subscriptionMode = subscriptionMode;
         this.startMessageId = startMessageId != null ? new BatchMessageIdImpl((MessageIdImpl) startMessageId) : null;
@@ -145,12 +151,12 @@ public class ConsumerImpl extends ConsumerBase {
         this.codecProvider = new CompressionCodecProvider();
         this.priorityLevel = conf.getPriorityLevel();
         this.batchMessageAckTracker = new ConcurrentSkipListMap<>();
-        this.readCompacted = conf.getReadCompacted();
+        this.readCompacted = conf.isReadCompacted();
 
         if (client.getConfiguration().getStatsIntervalSeconds() > 0) {
-            stats = new ConsumerStats(client, conf, this);
+            stats = new ConsumerStatsRecorderImpl(client, conf, this);
         } else {
-            stats = ConsumerStats.CONSUMER_STATS_DISABLED;
+            stats = ConsumerStatsDisabled.INSTANCE;
         }
 
         if (conf.getReceiverQueueSize() <= 1) {
@@ -216,7 +222,7 @@ public class ConsumerImpl extends ConsumerBase {
     }
 
     @Override
-    protected Message internalReceive() throws PulsarClientException {
+    protected Message<T> internalReceive() throws PulsarClientException {
         if (conf.getReceiverQueueSize() == 0) {
             checkArgument(zeroQueueLock != null, "Receiver queue size can't be modified");
             zeroQueueLock.writeLock().lock();
@@ -226,7 +232,7 @@ public class ConsumerImpl extends ConsumerBase {
                 zeroQueueLock.writeLock().unlock();
             }
         }
-        Message message;
+        Message<T> message;
         try {
             message = incomingMessages.take();
             messageProcessed(message);
@@ -239,10 +245,10 @@ public class ConsumerImpl extends ConsumerBase {
     }
 
     @Override
-    protected CompletableFuture<Message> internalReceiveAsync() {
+    protected CompletableFuture<Message<T>> internalReceiveAsync() {
 
-        CompletableFuture<Message> result = new CompletableFuture<Message>();
-        Message message = null;
+        CompletableFuture<Message<T>> result = new CompletableFuture<>();
+        Message<T> message = null;
         try {
             lock.writeLock().lock();
             message = incomingMessages.poll(0, TimeUnit.MILLISECONDS);
@@ -266,7 +272,7 @@ public class ConsumerImpl extends ConsumerBase {
         return result;
     }
 
-    private Message fetchSingleMessageFromBroker() throws PulsarClientException {
+    private Message<T> fetchSingleMessageFromBroker() throws PulsarClientException {
         checkArgument(conf.getReceiverQueueSize() == 0);
 
         // Just being cautious
@@ -275,7 +281,7 @@ public class ConsumerImpl extends ConsumerBase {
             incomingMessages.clear();
         }
 
-        Message message;
+        Message<T> message;
         try {
             // is cnx is null or if the connection breaks the connectionOpened function will send the flow again
             waitingOnReceiveForZeroQueueSize = true;
@@ -287,7 +293,7 @@ public class ConsumerImpl extends ConsumerBase {
             do {
                 message = incomingMessages.take();
                 lastDequeuedMessage = message.getMessageId();
-                ClientCnx msgCnx = ((MessageImpl) message).getCnx();
+                ClientCnx msgCnx = ((MessageImpl<?>) message).getCnx();
                 // synchronized need to prevent race between connectionOpened and the check "msgCnx == cnx()"
                 synchronized (ConsumerImpl.this) {
                     // if message received due to an old flow - discard it and wait for the message from the
@@ -314,8 +320,8 @@ public class ConsumerImpl extends ConsumerBase {
     }
 
     @Override
-    protected Message internalReceive(int timeout, TimeUnit unit) throws PulsarClientException {
-        Message message;
+    protected Message<T> internalReceive(int timeout, TimeUnit unit) throws PulsarClientException {
+        Message<T> message;
         try {
             message = incomingMessages.poll(timeout, unit);
             if (message != null) {
@@ -630,7 +636,7 @@ public class ConsumerImpl extends ConsumerBase {
      * not seen by the application
      */
     private BatchMessageIdImpl clearReceiverQueue() {
-        List<Message> currentMessageQueue = new ArrayList<>(incomingMessages.size());
+        List<Message<?>> currentMessageQueue = new ArrayList<>(incomingMessages.size());
         incomingMessages.drainTo(currentMessageQueue);
         if (!currentMessageQueue.isEmpty()) {
             MessageIdImpl nextMessageInQueue = (MessageIdImpl) currentMessageQueue.get(0).getMessageId();
@@ -696,10 +702,7 @@ public class ConsumerImpl extends ConsumerBase {
             return CompletableFuture.completedFuture(null);
         }
 
-        Timeout timeout = stats.getStatTimeout();
-        if (timeout != null) {
-            timeout.cancel();
-        }
+        stats.getStatTimeout().ifPresent(Timeout::cancel);
 
         setState(State.Closing);
 
@@ -733,7 +736,7 @@ public class ConsumerImpl extends ConsumerBase {
         try {
             if (listenerExecutor != null && !listenerExecutor.isShutdown()) {
                 while (!pendingReceives.isEmpty()) {
-                    CompletableFuture<Message> receiveFuture = pendingReceives.poll();
+                    CompletableFuture<Message<T>> receiveFuture = pendingReceives.poll();
                     if (receiveFuture != null) {
                         receiveFuture.completeExceptionally(
                                 new PulsarClientException.AlreadyClosedException("Consumer is already closed"));
@@ -798,8 +801,8 @@ public class ConsumerImpl extends ConsumerBase {
         final int numMessages = msgMetadata.getNumMessagesInBatch();
 
         if (numMessages == 1 && !msgMetadata.hasNumMessagesInBatch()) {
-            final MessageImpl message = new MessageImpl(messageId, msgMetadata, uncompressedPayload,
-                    getPartitionIndex(), cnx);
+            final MessageImpl<T> message = new MessageImpl<>(messageId, msgMetadata, uncompressedPayload,
+                    getPartitionIndex(), cnx, schema);
             uncompressedPayload.release();
             msgMetadata.recycle();
 
@@ -847,7 +850,7 @@ public class ConsumerImpl extends ConsumerBase {
             listenerExecutor.execute(() -> {
                 for (int i = 0; i < numMessages; i++) {
                     try {
-                        Message msg = internalReceive(0, TimeUnit.MILLISECONDS);
+                        Message<T> msg = internalReceive(0, TimeUnit.MILLISECONDS);
                         // complete the callback-loop in case queue is cleared up
                         if (msg == null) {
                             if (log.isDebugEnabled()) {
@@ -880,10 +883,10 @@ public class ConsumerImpl extends ConsumerBase {
      *
      * @param message
      */
-    void notifyPendingReceivedCallback(final MessageImpl message, Exception exception) {
+    void notifyPendingReceivedCallback(final Message<T> message, Exception exception) {
         if (!pendingReceives.isEmpty()) {
             // fetch receivedCallback from queue
-            CompletableFuture<Message> receivedFuture = pendingReceives.poll();
+            CompletableFuture<Message<T>> receivedFuture = pendingReceives.poll();
             if (exception == null) {
                 checkNotNull(message, "received message can't be null");
                 if (receivedFuture != null) {
@@ -947,8 +950,8 @@ public class ConsumerImpl extends ConsumerBase {
 
                 BatchMessageIdImpl batchMessageIdImpl = new BatchMessageIdImpl(messageId.getLedgerId(),
                         messageId.getEntryId(), getPartitionIndex(), i);
-                final MessageImpl message = new MessageImpl(batchMessageIdImpl, msgMetadata,
-                        singleMessageMetadataBuilder.build(), singleMessagePayload, cnx);
+                final MessageImpl<T> message = new MessageImpl<>(batchMessageIdImpl, msgMetadata,
+                        singleMessageMetadataBuilder.build(), singleMessagePayload, cnx, schema);
                 lock.readLock().lock();
                 try {
                     if (pendingReceives.isEmpty()) {
@@ -983,9 +986,9 @@ public class ConsumerImpl extends ConsumerBase {
      *
      * Periodically, it sends a Flow command to notify the broker that it can push more messages
      */
-    protected synchronized void messageProcessed(Message msg) {
+    protected synchronized void messageProcessed(Message<?> msg) {
         ClientCnx currentCnx = cnx();
-        ClientCnx msgCnx = ((MessageImpl) msg).getCnx();
+        ClientCnx msgCnx = ((MessageImpl<?>) msg).getCnx();
         lastDequeuedMessage = msg.getMessageId();
 
         if (msgCnx != currentCnx) {
@@ -1188,7 +1191,9 @@ public class ConsumerImpl extends ConsumerBase {
     }
 
     @Override
-    public void redeliverUnacknowledgedMessages(Set<MessageIdImpl> messageIds) {
+    public void redeliverUnacknowledgedMessages(Set<MessageId> messageIds) {
+        checkArgument(messageIds.stream().findFirst().get() instanceof MessageIdImpl);
+
         if (conf.getSubscriptionType() != SubscriptionType.Shared) {
             // We cannot redeliver single messages if subscription type is not Shared
             redeliverUnacknowledgedMessages();
@@ -1197,7 +1202,10 @@ public class ConsumerImpl extends ConsumerBase {
         ClientCnx cnx = cnx();
         if (isConnected() && cnx.getRemoteEndpointProtocolVersion() >= ProtocolVersion.v2.getNumber()) {
             int messagesFromQueue = removeExpiredMessagesFromQueue(messageIds);
-            Iterable<List<MessageIdImpl>> batches = Iterables.partition(messageIds, MAX_REDELIVER_UNACKNOWLEDGED);
+            Iterable<List<MessageIdImpl>> batches = Iterables.partition(
+                messageIds.stream()
+                    .map(messageId -> (MessageIdImpl)messageId)
+                    .collect(Collectors.toSet()), MAX_REDELIVER_UNACKNOWLEDGED);
             MessageIdData.Builder builder = MessageIdData.newBuilder();
             batches.forEach(ids -> {
                 List<MessageIdData> messageIdDatas = ids.stream().map(messageId -> {
@@ -1307,7 +1315,7 @@ public class ConsumerImpl extends ConsumerBase {
         return booleanFuture;
     }
 
-    private CompletableFuture<MessageId> getLastMessageIdAsync() {
+    CompletableFuture<MessageId> getLastMessageIdAsync() {
         if (getState() == State.Closing || getState() == State.Closed) {
             return FutureUtil
                 .failedFuture(new PulsarClientException.AlreadyClosedException("Consumer was already closed"));
@@ -1365,7 +1373,7 @@ public class ConsumerImpl extends ConsumerBase {
         }
     }
 
-    private MessageIdImpl getMessageIdImpl(Message msg) {
+    private MessageIdImpl getMessageIdImpl(Message<?> msg) {
         MessageIdImpl messageId = (MessageIdImpl) msg.getMessageId();
         if (messageId instanceof BatchMessageIdImpl) {
             // messageIds contain MessageIdImpl, not BatchMessageIdImpl
@@ -1374,9 +1382,9 @@ public class ConsumerImpl extends ConsumerBase {
         return messageId;
     }
 
-    private int removeExpiredMessagesFromQueue(Set<MessageIdImpl> messageIds) {
+    private int removeExpiredMessagesFromQueue(Set<MessageId> messageIds) {
         int messagesFromQueue = 0;
-        Message peek = incomingMessages.peek();
+        Message<T> peek = incomingMessages.peek();
         if (peek != null) {
             MessageIdImpl messageId = getMessageIdImpl(peek);
             if (!messageIds.contains(messageId)) {
@@ -1385,7 +1393,7 @@ public class ConsumerImpl extends ConsumerBase {
             }
 
             // try not to remove elements that are added while we remove
-            Message message = incomingMessages.poll();
+            Message<T> message = incomingMessages.poll();
             while (message != null) {
                 messagesFromQueue++;
                 MessageIdImpl id = getMessageIdImpl(message);
@@ -1401,9 +1409,6 @@ public class ConsumerImpl extends ConsumerBase {
 
     @Override
     public ConsumerStats getStats() {
-        if (stats instanceof ConsumerStatsDisabled) {
-            return null;
-        }
         return stats;
     }
 

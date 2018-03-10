@@ -18,6 +18,7 @@
  */
 package org.apache.pulsar.client.api;
 
+import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import static org.mockito.Mockito.spy;
 
 import java.io.IOException;
@@ -29,6 +30,7 @@ import java.util.concurrent.CompletableFuture;
 
 import javax.naming.AuthenticationException;
 
+import org.apache.pulsar.broker.PulsarServerException;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.authentication.AuthenticationDataCommand;
 import org.apache.pulsar.broker.authentication.AuthenticationDataSource;
@@ -37,7 +39,7 @@ import org.apache.pulsar.broker.authorization.AuthorizationProvider;
 import org.apache.pulsar.broker.authorization.AuthorizationService;
 import org.apache.pulsar.broker.cache.ConfigurationCacheService;
 import org.apache.pulsar.client.admin.PulsarAdmin;
-import org.apache.pulsar.common.naming.DestinationName;
+import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.naming.NamespaceName;
 import org.apache.pulsar.common.policies.data.AuthAction;
 import org.apache.pulsar.common.policies.data.PropertyAdmin;
@@ -84,13 +86,13 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
 
     /**
      * It verifies plugable authorization service
-     * 
+     *
      * <pre>
      * 1. Client passes correct authorization plugin-name + correct auth role: SUCCESS
      * 2. Client passes correct authorization plugin-name + incorrect auth-role: FAIL
      * 3. Client passes incorrect authorization plugin-name + correct auth-role: FAIL
      * </pre>
-     * 
+     *
      * @throws Exception
      */
     @Test
@@ -108,37 +110,76 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
         String lookupUrl;
         lookupUrl = new URI("pulsar://localhost:" + BROKER_PORT).toString();
 
-        ClientConfiguration clientConfValid = new ClientConfiguration();
         Authentication authentication = new ClientAuthentication(clientRole);
-        clientConfValid.setAuthentication(authentication);
-
-        ClientConfiguration clientConfInvalidRole = new ClientConfiguration();
         Authentication authenticationInvalidRole = new ClientAuthentication("test-role");
-        clientConfInvalidRole.setAuthentication(authenticationInvalidRole);
 
-        pulsarClient = PulsarClient.create(lookupUrl, clientConfValid);
-        PulsarClient pulsarClientInvalidRole = PulsarClient.create(lookupUrl, clientConfInvalidRole);
+        pulsarClient = PulsarClient.builder().serviceUrl(lookupUrl).authentication(authentication).build();
+        PulsarClient pulsarClientInvalidRole = PulsarClient.builder().serviceUrl(lookupUrl)
+                .authentication(authenticationInvalidRole).build();
 
         admin.properties().createProperty("my-property",
                 new PropertyAdmin(Lists.newArrayList("appid1", "appid2"), Sets.newHashSet("use")));
         admin.namespaces().createNamespace("my-property/use/my-ns");
 
         // (1) Valid Producer and consumer creation
-        Consumer consumer = pulsarClient.subscribe("persistent://my-property/use/my-ns/my-topic", "my-subscriber-name");
-        Producer producer = pulsarClient.createProducer("persistent://my-property/use/my-ns/my-topic");
+        Consumer<byte[]> consumer = pulsarClient.newConsumer().topic("persistent://my-property/use/my-ns/my-topic")
+                .subscriptionName("my-subscriber-name").subscribe();
+        Producer<byte[]> producer = pulsarClient.newProducer().topic("persistent://my-property/use/my-ns/my-topic")
+                .create();
         consumer.close();
         producer.close();
 
         // (2) InValid user auth-role will be rejected by authorization service
         try {
-            consumer = pulsarClientInvalidRole.subscribe("persistent://my-property/use/my-ns/my-topic",
-                    "my-subscriber-name");
+            consumer = pulsarClientInvalidRole.newConsumer().topic("persistent://my-property/use/my-ns/my-topic")
+                    .subscriptionName("my-subscriber-name").subscribe();
             Assert.fail("should have failed with authorization error");
         } catch (PulsarClientException.AuthorizationException pa) {
             // Ok
         }
         try {
-            producer = pulsarClientInvalidRole.createProducer("persistent://my-property/use/my-ns/my-topic");
+            producer = pulsarClientInvalidRole.newProducer().topic("persistent://my-property/use/my-ns/my-topic")
+                    .create();
+            Assert.fail("should have failed with authorization error");
+        } catch (PulsarClientException.AuthorizationException pa) {
+            // Ok
+        }
+
+        log.info("-- Exiting {} test --", methodName);
+    }
+
+    @Test
+    public void testSubscriptionPrefixAuthorization() throws Exception {
+        log.info("-- Starting {} test --", methodName);
+
+        conf.setAuthorizationProvider(TestAuthorizationProviderWithSubscriptionPrefix.class.getName());
+        setup();
+
+        ClientConfiguration adminConf = new ClientConfiguration();
+        Authentication adminAuthentication = new ClientAuthentication("superUser");
+        adminConf.setAuthentication(adminAuthentication);
+        admin = spy(new PulsarAdmin(brokerUrl, adminConf));
+
+        String lookupUrl;
+        lookupUrl = new URI("pulsar://localhost:" + BROKER_PORT).toString();
+
+        Authentication authentication = new ClientAuthentication(clientRole);
+
+        pulsarClient = PulsarClient.builder().serviceUrl(lookupUrl).authentication(authentication).build();
+
+        admin.properties().createProperty("prop-prefix",
+                new PropertyAdmin(Lists.newArrayList("appid1", "appid2"), Sets.newHashSet("use")));
+        admin.namespaces().createNamespace("prop-prefix/use/ns");
+
+        // (1) Valid subscription name will be approved by authorization service
+        Consumer<byte[]> consumer = pulsarClient.newConsumer().topic("persistent://prop-prefix/use/ns/t1")
+                .subscriptionName(clientRole + "-sub1").subscribe();
+        consumer.close();
+
+        // (2) InValid subscription name will be rejected by authorization service
+        try {
+            consumer = pulsarClient.newConsumer().topic("persistent://prop-prefix/use/ns/t1").subscriptionName("sub1")
+                    .subscribe();
             Assert.fail("should have failed with authorization error");
         } catch (PulsarClientException.AuthorizationException pa) {
             // Ok
@@ -155,14 +196,13 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
         setup();
 
         AuthorizationService authorizationService = new AuthorizationService(conf, null);
-        DestinationName destination = DestinationName.get("persistent://prop/cluster/ns/t1");
+        TopicName topicName = TopicName.get("persistent://prop/cluster/ns/t1");
         String role = "test-role";
-        Assert.assertFalse(authorizationService.canProduce(destination, role, null));
-        Assert.assertFalse(authorizationService.canConsume(destination, role, null, "sub1"));
-        authorizationService
-                .grantPermissionAsync(destination, null, role, "auth-json").get();
-        Assert.assertTrue(authorizationService.canProduce(destination, role, null));
-        Assert.assertTrue(authorizationService.canConsume(destination, role, null, "sub1"));
+        Assert.assertFalse(authorizationService.canProduce(topicName, role, null));
+        Assert.assertFalse(authorizationService.canConsume(topicName, role, null, "sub1"));
+        authorizationService.grantPermissionAsync(topicName, null, role, "auth-json").get();
+        Assert.assertTrue(authorizationService.canProduce(topicName, role, null));
+        Assert.assertTrue(authorizationService.canConsume(topicName, role, null, "sub1"));
 
         log.info("-- Exiting {} test --", methodName);
     }
@@ -175,18 +215,15 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
         setup();
 
         AuthorizationService authorizationService = new AuthorizationService(conf, null);
-        DestinationName destination = DestinationName.get("persistent://prop/cluster/ns/t1");
+        TopicName topicName = TopicName.get("persistent://prop/cluster/ns/t1");
         String role = "test-role";
-        authorizationService
-                .grantPermissionAsync(destination, null, role, "auth-json")
-                .get();
+        authorizationService.grantPermissionAsync(topicName, null, role, "auth-json").get();
         Assert.assertEquals(TestAuthorizationProviderWithGrantPermission.authDataJson, "auth-json");
-        Assert.assertTrue(
-                authorizationService.canProduce(destination, role, new AuthenticationDataCommand("prod-auth")));
+        Assert.assertTrue(authorizationService.canProduce(topicName, role, new AuthenticationDataCommand("prod-auth")));
         Assert.assertEquals(TestAuthorizationProviderWithGrantPermission.authenticationData.getCommandData(),
                 "prod-auth");
-        Assert.assertTrue(authorizationService.canConsume(destination, role, new AuthenticationDataCommand("cons-auth"),
-                "sub1"));
+        Assert.assertTrue(
+                authorizationService.canConsume(topicName, role, new AuthenticationDataCommand("cons-auth"), "sub1"));
         Assert.assertEquals(TestAuthorizationProviderWithGrantPermission.authenticationData.getCommandData(),
                 "cons-auth");
 
@@ -282,19 +319,19 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
         }
 
         @Override
-        public CompletableFuture<Boolean> canProduceAsync(DestinationName destination, String role,
+        public CompletableFuture<Boolean> canProduceAsync(TopicName topicName, String role,
                 AuthenticationDataSource authenticationData) {
             return CompletableFuture.completedFuture(clientRole.equals(role));
         }
 
         @Override
-        public CompletableFuture<Boolean> canConsumeAsync(DestinationName destination, String role,
+        public CompletableFuture<Boolean> canConsumeAsync(TopicName topicName, String role,
                 AuthenticationDataSource authenticationData, String subscription) {
             return CompletableFuture.completedFuture(clientRole.equals(role));
         }
 
         @Override
-        public CompletableFuture<Boolean> canLookupAsync(DestinationName destination, String role,
+        public CompletableFuture<Boolean> canLookupAsync(TopicName topicName, String role,
                 AuthenticationDataSource authenticationData) {
             return CompletableFuture.completedFuture(clientRole.equals(role));
         }
@@ -306,8 +343,8 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
         }
 
         @Override
-        public CompletableFuture<Void> grantPermissionAsync(DestinationName topicname, Set<AuthAction> actions,
-                String role, String authenticationData) {
+        public CompletableFuture<Void> grantPermissionAsync(TopicName topicname, Set<AuthAction> actions, String role,
+                String authenticationData) {
             return CompletableFuture.completedFuture(null);
         }
     }
@@ -319,22 +356,40 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
     public static class TestAuthorizationProvider2 extends TestAuthorizationProvider {
 
         @Override
-        public CompletableFuture<Boolean> canProduceAsync(DestinationName destination, String role,
+        public CompletableFuture<Boolean> canProduceAsync(TopicName topicName, String role,
                 AuthenticationDataSource authenticationData) {
             return CompletableFuture.completedFuture(true);
         }
 
         @Override
-        public CompletableFuture<Boolean> canConsumeAsync(DestinationName destination, String role,
+        public CompletableFuture<Boolean> canConsumeAsync(TopicName topicName, String role,
                 AuthenticationDataSource authenticationData, String subscription) {
             return CompletableFuture.completedFuture(false);
         }
 
         @Override
-        public CompletableFuture<Boolean> canLookupAsync(DestinationName destination, String role,
+        public CompletableFuture<Boolean> canLookupAsync(TopicName topicName, String role,
                 AuthenticationDataSource authenticationData) {
             return CompletableFuture.completedFuture(true);
         }
+    }
+
+    public static class TestAuthorizationProviderWithSubscriptionPrefix extends TestAuthorizationProvider {
+
+        @Override
+        public CompletableFuture<Boolean> canConsumeAsync(TopicName topicName, String role,
+                AuthenticationDataSource authenticationData, String subscription) {
+            CompletableFuture<Boolean> future = new CompletableFuture<>();
+            if (isNotBlank(subscription)) {
+                if (!subscription.startsWith(role)) {
+                    future.completeExceptionally(new PulsarServerException(
+                            "The subscription name needs to be prefixed by the authentication role"));
+                }
+            }
+            future.complete(clientRole.equals(role));
+            return future;
+        }
+
     }
 
     public static class TestAuthorizationProviderWithGrantPermission extends TestAuthorizationProvider {
@@ -344,21 +399,21 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
         static String authDataJson;
 
         @Override
-        public CompletableFuture<Boolean> canProduceAsync(DestinationName destination, String role,
+        public CompletableFuture<Boolean> canProduceAsync(TopicName topicName, String role,
                 AuthenticationDataSource authenticationData) {
             this.authenticationData = authenticationData;
             return CompletableFuture.completedFuture(grantRoles.contains(role));
         }
 
         @Override
-        public CompletableFuture<Boolean> canConsumeAsync(DestinationName destination, String role,
+        public CompletableFuture<Boolean> canConsumeAsync(TopicName topicName, String role,
                 AuthenticationDataSource authenticationData, String subscription) {
             this.authenticationData = authenticationData;
             return CompletableFuture.completedFuture(grantRoles.contains(role));
         }
 
         @Override
-        public CompletableFuture<Boolean> canLookupAsync(DestinationName destination, String role,
+        public CompletableFuture<Boolean> canLookupAsync(TopicName topicName, String role,
                 AuthenticationDataSource authenticationData) {
             this.authenticationData = authenticationData;
             return CompletableFuture.completedFuture(grantRoles.contains(role));
@@ -373,8 +428,8 @@ public class AuthorizationProducerConsumerTest extends ProducerConsumerBase {
         }
 
         @Override
-        public CompletableFuture<Void> grantPermissionAsync(DestinationName topicname, Set<AuthAction> actions,
-                String role, String authData) {
+        public CompletableFuture<Void> grantPermissionAsync(TopicName topicname, Set<AuthAction> actions, String role,
+                String authData) {
             this.authDataJson = authData;
             grantRoles.add(role);
             return CompletableFuture.completedFuture(null);
