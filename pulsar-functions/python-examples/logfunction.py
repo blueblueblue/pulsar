@@ -18,4 +18,13 @@
 # under the License.
 #
 
-# -*- encoding: utf-8 -*-
+
+from pulsar import Function
+
+class LogFunction(Function):
+  def __init__(self):
+    pass
+
+  def process(self, input, context):
+    context.get_logger().info(input)
+    return input + '!'

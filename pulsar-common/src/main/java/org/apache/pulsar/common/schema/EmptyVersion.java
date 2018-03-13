@@ -16,20 +16,13 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pulsar.functions.api;
+package org.apache.pulsar.common.schema;
 
-/**
- * This is the core interface of the function api. The process is called
- * for every message of the input topic of the function. The incoming input bytes
- * are converted to the input type I for simple Java types(String, Integer, Boolean,
- * Map, and List types) and for org.Json type. If this serialization approach does not
- * meet your needs, you can use the byte stream handler defined in RawRequestHandler.
- */
-@FunctionalInterface
-public interface PulsarFunction<I, O> {
-    /**
-     * Process the input.
-     * @return the output
-     */
-    O process(I input, Context context) throws Exception;
+final public class EmptyVersion implements SchemaVersion {
+    private static final byte[] EMPTY = new byte[]{};
+
+    @Override
+    public byte[] bytes() {
+        return EMPTY;
+    }
 }
