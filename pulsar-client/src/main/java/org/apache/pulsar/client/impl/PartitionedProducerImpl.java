@@ -139,6 +139,14 @@ public class PartitionedProducerImpl<T> extends ProducerBase<T> {
     }
 
     @Override
+    public MessageId send(Message<T> message) throws PulsarClientException {
+        int partition = routerPolicy.choosePartition(message, topicMetadata);
+        checkArgument(partition >= 0 && partition < topicMetadata.numPartitions(),
+            "Illegal partition index chosen by the message routing policy");
+        return producers.get(partition).send(message);
+    }
+
+    @Override
     public CompletableFuture<MessageId> sendAsync(Message<T> message) {
 
         switch (getState()) {
@@ -216,16 +224,6 @@ public class PartitionedProducerImpl<T> extends ProducerBase<T> {
     }
 
     private static final Logger log = LoggerFactory.getLogger(PartitionedProducerImpl.class);
-
-    @Override
-    void connectionFailed(PulsarClientException exception) {
-        // noop
-    }
-
-    @Override
-    void connectionOpened(ClientCnx cnx) {
-        // noop
-    }
 
     @Override
     String getHandlerName() {
