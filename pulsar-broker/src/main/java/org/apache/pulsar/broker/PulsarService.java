@@ -38,6 +38,7 @@ import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 import org.apache.bookkeeper.client.BookKeeper;
+import org.apache.bookkeeper.common.util.OrderedExecutor;
 import org.apache.bookkeeper.common.util.OrderedScheduler;
 import org.apache.bookkeeper.mledger.ManagedLedgerFactory;
 import org.apache.commons.lang3.builder.ReflectionToStringBuilder;
@@ -80,6 +81,7 @@ import org.apache.pulsar.zookeeper.ZooKeeperClientFactory;
 import org.apache.pulsar.zookeeper.ZookeeperBkClientFactoryImpl;
 import org.apache.zookeeper.ZooKeeper;
 import org.eclipse.jetty.servlet.ServletHolder;
+import org.eclipse.jetty.websocket.servlet.WebSocketServlet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -105,8 +107,8 @@ public class PulsarService implements AutoCloseable {
             new DefaultThreadFactory("pulsar"));
     private final ScheduledExecutorService cacheExecutor = Executors.newScheduledThreadPool(10,
             new DefaultThreadFactory("zk-cache-callback"));
-    private final OrderedScheduler orderedExecutor = OrderedScheduler.newSchedulerBuilder().numThreads(8)
-            .name("pulsar-ordered").build();
+    private final OrderedExecutor orderedExecutor = OrderedExecutor.newBuilder().numThreads(8).name("pulsar-ordered")
+            .build();
     private final ScheduledExecutorService loadManagerExecutor;
     private ScheduledFuture<?> loadReportTask = null;
     private ScheduledFuture<?> loadSheddingTask = null;
@@ -310,12 +312,24 @@ public class PulsarService implements AutoCloseable {
                         new ClusterData(webServiceAddress, webServiceAddressTls, brokerServiceUrl, brokerServiceUrlTls),
                         config);
                 this.webSocketService.start();
+
+                final WebSocketServlet producerWebSocketServlet = new WebSocketProducerServlet(webSocketService);
                 this.webService.addServlet(WebSocketProducerServlet.SERVLET_PATH,
-                        new ServletHolder(new WebSocketProducerServlet(webSocketService)), true, attributeMap);
+                        new ServletHolder(producerWebSocketServlet), true, attributeMap);
+                this.webService.addServlet(WebSocketProducerServlet.SERVLET_PATH_V2,
+                        new ServletHolder(producerWebSocketServlet), true, attributeMap);
+
+                final WebSocketServlet consumerWebSocketServlet = new WebSocketConsumerServlet(webSocketService);
                 this.webService.addServlet(WebSocketConsumerServlet.SERVLET_PATH,
-                        new ServletHolder(new WebSocketConsumerServlet(webSocketService)), true, attributeMap);
+                        new ServletHolder(consumerWebSocketServlet), true, attributeMap);
+                this.webService.addServlet(WebSocketConsumerServlet.SERVLET_PATH_V2,
+                        new ServletHolder(consumerWebSocketServlet), true, attributeMap);
+
+                final WebSocketServlet readerWebSocketServlet = new WebSocketReaderServlet(webSocketService);
                 this.webService.addServlet(WebSocketReaderServlet.SERVLET_PATH,
-                        new ServletHolder(new WebSocketReaderServlet(webSocketService)), true, attributeMap);
+                        new ServletHolder(readerWebSocketServlet), true, attributeMap);
+                this.webService.addServlet(WebSocketReaderServlet.SERVLET_PATH_V2,
+                        new ServletHolder(readerWebSocketServlet), true, attributeMap);
             }
 
             if (LOG.isDebugEnabled()) {
@@ -432,7 +446,7 @@ public class PulsarService implements AutoCloseable {
 
         LOG.info("starting configuration cache service");
 
-        this.localZkCache = new LocalZooKeeperCache(getZkClient(), getOrderedExecutor(), this.cacheExecutor);
+        this.localZkCache = new LocalZooKeeperCache(getZkClient(), getOrderedExecutor());
         this.globalZkCache = new GlobalZooKeeperCache(getZooKeeperClientFactory(),
                 (int) config.getZooKeeperSessionTimeoutMillis(), config.getGlobalZookeeperServers(),
                 getOrderedExecutor(), this.cacheExecutor);
@@ -598,7 +612,7 @@ public class PulsarService implements AutoCloseable {
         return loadManagerExecutor;
     }
 
-    public OrderedScheduler getOrderedExecutor() {
+    public OrderedExecutor getOrderedExecutor() {
         return orderedExecutor;
     }
 
@@ -622,9 +636,11 @@ public class PulsarService implements AutoCloseable {
         if (this.adminClient == null) {
             try {
                 String adminApiUrl = webAddress(config);
-                this.adminClient = new PulsarAdmin(new URL(adminApiUrl),
-                        this.getConfiguration().getBrokerClientAuthenticationPlugin(),
-                        this.getConfiguration().getBrokerClientAuthenticationParameters());
+                this.adminClient = PulsarAdmin.builder().serviceHttpUrl(adminApiUrl) //
+                        .authentication( //
+                                this.getConfiguration().getBrokerClientAuthenticationPlugin(), //
+                                this.getConfiguration().getBrokerClientAuthenticationParameters()) //
+                        .build();
                 LOG.info("Admin api url: " + adminApiUrl);
             } catch (Exception e) {
                 throw new PulsarServerException(e);
