@@ -37,10 +37,12 @@ import static org.testng.Assert.assertTrue;
 
 import com.google.common.collect.Maps;
 import com.google.protobuf.ByteString;
+
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
+
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -49,7 +51,9 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+
 import javax.naming.AuthenticationException;
+
 import org.apache.bookkeeper.mledger.AsyncCallbacks.AddEntryCallback;
 import org.apache.bookkeeper.mledger.AsyncCallbacks.CloseCallback;
 import org.apache.bookkeeper.mledger.AsyncCallbacks.DeleteCursorCallback;
@@ -61,7 +65,6 @@ import org.apache.bookkeeper.mledger.ManagedLedgerConfig;
 import org.apache.bookkeeper.mledger.ManagedLedgerException;
 import org.apache.bookkeeper.mledger.ManagedLedgerFactory;
 import org.apache.bookkeeper.mledger.impl.PositionImpl;
-import org.apache.bookkeeper.tools.cli.helpers.Command;
 import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.admin.AdminResource;
@@ -89,6 +92,7 @@ import org.apache.pulsar.common.api.proto.PulsarApi.CommandLookupTopicResponse;
 import org.apache.pulsar.common.api.proto.PulsarApi.CommandProducerSuccess;
 import org.apache.pulsar.common.api.proto.PulsarApi.CommandSendError;
 import org.apache.pulsar.common.api.proto.PulsarApi.CommandSendReceipt;
+import org.apache.pulsar.common.api.proto.PulsarApi.CommandSubscribe.InitialPosition;
 import org.apache.pulsar.common.api.proto.PulsarApi.CommandSubscribe.SubType;
 import org.apache.pulsar.common.api.proto.PulsarApi.CommandSuccess;
 import org.apache.pulsar.common.api.proto.PulsarApi.EncryptionKeys;
@@ -380,7 +384,7 @@ public class ServerCnxTest {
         channel.writeInbound(clientCommand);
         assertTrue(getResponse() instanceof CommandProducerSuccess);
 
-        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(successTopicName);
+        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(successTopicName).get();
 
         assertNotNull(topicRef);
         assertEquals(topicRef.getProducers().size(), 1);
@@ -391,7 +395,7 @@ public class ServerCnxTest {
         channel.writeInbound(clientCommand);
 
         assertTrue(getResponse() instanceof CommandError);
-        assertNull(brokerService.getTopicReference(failTopicName));
+        assertFalse(pulsar.getBrokerService().getTopicReference(failTopicName).isPresent());
 
         channel.finish();
         assertEquals(topicRef.getProducers().size(), 0);
@@ -403,7 +407,7 @@ public class ServerCnxTest {
         setChannelConnected();
 
         CompletableFuture<Topic> delayFuture = new CompletableFuture<>();
-        doReturn(delayFuture).when(brokerService).getTopic(any(String.class));
+        doReturn(delayFuture).when(brokerService).getOrCreateTopic(any(String.class));
         // Create producer first time
         ByteBuf clientCommand = Commands.newProducer(successTopicName, 1 /* producer id */, 1 /* request id */,
                 "prod-name", Collections.emptyMap());
@@ -439,7 +443,7 @@ public class ServerCnxTest {
         CommandError errorResponse = (CommandError) response;
         assertEquals(errorResponse.getError(), ServerError.ServiceNotReady);
 
-        assertNull(brokerService.getTopicReference(nonOwnedTopicName));
+        assertFalse(pulsar.getBrokerService().getTopicReference(nonOwnedTopicName).isPresent());
 
         channel.finish();
     }
@@ -460,7 +464,7 @@ public class ServerCnxTest {
         channel.writeInbound(clientCommand);
         assertEquals(getResponse().getClass(), CommandProducerSuccess.class);
 
-        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(successTopicName);
+        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(successTopicName).get();
 
         assertNotNull(topicRef);
         assertEquals(topicRef.getProducers().size(), 1);
@@ -553,7 +557,7 @@ public class ServerCnxTest {
         channel.writeInbound(newProducerCmd);
         assertTrue(getResponse() instanceof CommandProducerSuccess);
 
-        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(nonExistentTopicName);
+        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(nonExistentTopicName).get();
         assertNotNull(topicRef);
         assertEquals(topicRef.getProducers().size(), 1);
         channel.finish();
@@ -564,7 +568,7 @@ public class ServerCnxTest {
         ByteBuf newSubscribeCmd = Commands.newSubscribe(nonExistentTopicName, //
                 successSubName, 1 /* consumer id */, 1 /* request id */, SubType.Exclusive, 0, "test" /* consumer name */);
         channel.writeInbound(newSubscribeCmd);
-        topicRef = (PersistentTopic) brokerService.getTopicReference(nonExistentTopicName);
+        topicRef = (PersistentTopic) brokerService.getTopicReference(nonExistentTopicName).get();
         assertNotNull(topicRef);
         assertTrue(topicRef.getSubscriptions().containsKey(successSubName));
         assertTrue(topicRef.getSubscription(successSubName).getDispatcher().isConsumerConnected());
@@ -703,7 +707,7 @@ public class ServerCnxTest {
         setChannelConnected();
 
         CompletableFuture<Topic> delayFuture = new CompletableFuture<>();
-        doReturn(delayFuture).when(brokerService).getTopic(any(String.class));
+        doReturn(delayFuture).when(brokerService).getOrCreateTopic(any(String.class));
         // Create subscriber first time
         ByteBuf clientCommand = Commands.newSubscribe(successTopicName, //
                 successSubName, 1 /* consumer id */, 1 /* request id */, SubType.Exclusive, 0, "test" /* consumer name */);
@@ -1097,7 +1101,7 @@ public class ServerCnxTest {
         channel.writeInbound(clientCommand);
         assertTrue(getResponse() instanceof CommandSuccess);
 
-        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(successTopicName);
+        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(successTopicName).get();
 
         assertNotNull(topicRef);
         assertTrue(topicRef.getSubscriptions().containsKey(successSubName));
@@ -1141,7 +1145,7 @@ public class ServerCnxTest {
         channel.writeInbound(clientCommand);
         assertTrue(getResponse() instanceof CommandSuccess);
 
-        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(successTopicName);
+        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(successTopicName).get();
         topicRef.markBatchMessagePublished();
 
         // test SUBSCRIBE on topic and cursor creation success
@@ -1263,7 +1267,7 @@ public class ServerCnxTest {
 
         Object response = getResponse();
         assertEquals(response.getClass(), CommandProducerSuccess.class);
-        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(encryptionRequiredTopicName);
+        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(encryptionRequiredTopicName).get();
         assertNotNull(topicRef);
         assertEquals(topicRef.getProducers().size(), 1);
 
@@ -1293,7 +1297,7 @@ public class ServerCnxTest {
         assertEquals(response.getClass(), CommandError.class);
         CommandError errorResponse = (CommandError) response;
         assertEquals(errorResponse.getError(), ServerError.MetadataError);
-        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(encryptionRequiredTopicName);
+        PersistentTopic topicRef = (PersistentTopic) brokerService.getTopicReference(encryptionRequiredTopicName).get();
         assertNotNull(topicRef);
         assertEquals(topicRef.getProducers().size(), 0);
 
@@ -1452,20 +1456,20 @@ public class ServerCnxTest {
             @Override
             public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
                 Thread.sleep(300);
-                ((OpenCursorCallback) invocationOnMock.getArguments()[1]).openCursorComplete(cursorMock, null);
+                ((OpenCursorCallback) invocationOnMock.getArguments()[2]).openCursorComplete(cursorMock, null);
                 return null;
             }
-        }).when(ledgerMock).asyncOpenCursor(matches(".*success.*"), any(OpenCursorCallback.class), anyObject());
+        }).when(ledgerMock).asyncOpenCursor(matches(".*success.*"), any(InitialPosition.class), any(OpenCursorCallback.class), anyObject());
 
         doAnswer(new Answer<Object>() {
             @Override
             public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
                 Thread.sleep(300);
-                ((OpenCursorCallback) invocationOnMock.getArguments()[1])
+                ((OpenCursorCallback) invocationOnMock.getArguments()[2])
                         .openCursorFailed(new ManagedLedgerException("Managed ledger failure"), null);
                 return null;
             }
-        }).when(ledgerMock).asyncOpenCursor(matches(".*fail.*"), any(OpenCursorCallback.class), anyObject());
+        }).when(ledgerMock).asyncOpenCursor(matches(".*fail.*"), any(InitialPosition.class), any(OpenCursorCallback.class), anyObject());
 
         doAnswer(new Answer<Object>() {
             @Override

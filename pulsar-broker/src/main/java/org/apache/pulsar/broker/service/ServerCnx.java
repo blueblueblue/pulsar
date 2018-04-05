@@ -77,6 +77,7 @@ import org.apache.pulsar.common.api.proto.PulsarApi.CommandSeek;
 import org.apache.pulsar.common.api.proto.PulsarApi.CommandSend;
 import org.apache.pulsar.common.api.proto.PulsarApi.CommandSubscribe;
 import org.apache.pulsar.common.api.proto.PulsarApi.CommandSubscribe.SubType;
+import org.apache.pulsar.common.api.proto.PulsarApi.CommandSubscribe.InitialPosition;
 import org.apache.pulsar.common.api.proto.PulsarApi.CommandUnsubscribe;
 import org.apache.pulsar.common.api.proto.PulsarApi.MessageIdData;
 import org.apache.pulsar.common.api.proto.PulsarApi.MessageMetadata;
@@ -436,8 +437,8 @@ public class ServerCnx extends PulsarHandler {
         commandConsumerStatsResponseBuilder.setAvailablePermits(consumerStats.availablePermits);
         commandConsumerStatsResponseBuilder.setUnackedMessages(consumerStats.unackedMessages);
         commandConsumerStatsResponseBuilder.setBlockedConsumerOnUnackedMsgs(consumerStats.blockedConsumerOnUnackedMsgs);
-        commandConsumerStatsResponseBuilder.setAddress(consumerStats.address);
-        commandConsumerStatsResponseBuilder.setConnectedSince(consumerStats.connectedSince);
+        commandConsumerStatsResponseBuilder.setAddress(consumerStats.getAddress());
+        commandConsumerStatsResponseBuilder.setConnectedSince(consumerStats.getConnectedSince());
 
         Subscription subscription = consumer.getSubscription();
         commandConsumerStatsResponseBuilder.setMsgBacklog(subscription.getNumberOfEntriesInBacklog());
@@ -559,6 +560,7 @@ public class ServerCnx extends PulsarHandler {
         final int priorityLevel = subscribe.hasPriorityLevel() ? subscribe.getPriorityLevel() : 0;
         final boolean readCompacted = subscribe.getReadCompacted();
         final Map<String, String> metadata = CommandUtils.metadataFromCommand(subscribe);
+        final InitialPosition initialPosition = subscribe.getInitialPosition();
 
         CompletableFuture<Boolean> isProxyAuthorizedFuture;
         if (service.isAuthorizationEnabled() && originalPrincipal != null) {
@@ -619,10 +621,10 @@ public class ServerCnx extends PulsarHandler {
                             }
                         }
 
-                        service.getTopic(topicName.toString())
+                        service.getOrCreateTopic(topicName.toString())
                                 .thenCompose(topic -> topic.subscribe(ServerCnx.this, subscriptionName, consumerId,
                                                                       subType, priorityLevel, consumerName, isDurable,
-                                                                      startMessageId, metadata, readCompacted))
+                                                                      startMessageId, metadata, readCompacted, initialPosition))
                                 .thenAccept(consumer -> {
                                     if (consumerFuture.complete(consumer)) {
                                         log.info("[{}] Created subscription on topic {} / {}", remoteAddress, topicName,
@@ -807,7 +809,7 @@ public class ServerCnx extends PulsarHandler {
 
                         log.info("[{}][{}] Creating producer. producerId={}", remoteAddress, topicName, producerId);
 
-                        service.getTopic(topicName.toString()).thenAccept((Topic topic) -> {
+                        service.getOrCreateTopic(topicName.toString()).thenAccept((Topic topic) -> {
                             // Before creating producer, check if backlog quota exceeded
                             // on topic
                             if (topic.isBacklogQuotaExceeded(producerName)) {
@@ -953,7 +955,7 @@ public class ServerCnx extends PulsarHandler {
             if (nonPersistentPendingMessages > MaxNonPersistentPendingMessages) {
                 final long producerId = send.getProducerId();
                 final long sequenceId = send.getSequenceId();
-                service.getTopicOrderedExecutor().submitOrdered(producer.getTopic().getName(), SafeRun.safeRun(() -> {
+                service.getTopicOrderedExecutor().executeOrdered(producer.getTopic().getName(), SafeRun.safeRun(() -> {
                     ctx.writeAndFlush(Commands.newSendReceipt(producerId, sequenceId, -1, -1), ctx.voidPromise());
                 }));
                 producer.recordMessageDrop(send.getNumMessages());

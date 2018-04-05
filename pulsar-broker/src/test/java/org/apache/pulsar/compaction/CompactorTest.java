@@ -64,7 +64,7 @@ public class CompactorTest extends MockedPulsarServiceBaseTest {
         admin.clusters().createCluster("use",
                 new ClusterData("http://127.0.0.1:" + BROKER_WEBSERVICE_PORT));
         admin.properties().createProperty("my-property",
-                new PropertyAdmin(Lists.newArrayList("appid1", "appid2"), Sets.newHashSet("use")));
+                new PropertyAdmin(Sets.newHashSet("appid1", "appid2"), Sets.newHashSet("use")));
         admin.namespaces().createNamespace("my-property/use/my-ns");
 
         compactionScheduler = Executors.newSingleThreadScheduledExecutor(
@@ -207,7 +207,7 @@ public class CompactorTest extends MockedPulsarServiceBaseTest {
 
     public ByteBuf extractPayload(RawMessage m) throws Exception {
         ByteBuf payloadAndMetadata = m.getHeadersAndPayload();
-        Commands.readChecksum(payloadAndMetadata);
+        Commands.skipChecksumIfPresent(payloadAndMetadata);
         int metadataSize = payloadAndMetadata.readInt(); // metadata size
          byte[] metadata = new byte[metadataSize];
         payloadAndMetadata.readBytes(metadata);

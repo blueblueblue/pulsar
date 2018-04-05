@@ -42,6 +42,7 @@ import javax.ws.rs.core.Response.Status;
 import javax.ws.rs.core.UriBuilder;
 import javax.ws.rs.core.UriInfo;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.broker.PulsarService;
 import org.apache.pulsar.broker.ServiceConfiguration;
 import org.apache.pulsar.broker.admin.AdminResource;
@@ -264,7 +265,8 @@ public abstract class PulsarWebResource {
 
     private URI getRedirectionUrl(ClusterData differentClusterData) throws MalformedURLException {
         URL webUrl = null;
-        if (pulsar.getConfiguration().isTlsEnabled() && !differentClusterData.getServiceUrlTls().isEmpty()) {
+        if (isRequestHttps() && pulsar.getConfiguration().isTlsEnabled()
+                && StringUtils.isNotBlank(differentClusterData.getServiceUrlTls())) {
             webUrl = new URL(differentClusterData.getServiceUrlTls());
         } else {
             webUrl = new URL(differentClusterData.getServiceUrl());
@@ -605,7 +607,7 @@ public abstract class PulsarWebResource {
         return validationFuture;
     }
 
-    private static ClusterData getOwnerFromPeerClusterList(PulsarService pulsar, List<String> replicationClusters) {
+    private static ClusterData getOwnerFromPeerClusterList(PulsarService pulsar, Set<String> replicationClusters) {
         String currentCluster = pulsar.getConfiguration().getClusterName();
         if (replicationClusters == null || replicationClusters.isEmpty() || isBlank(currentCluster)) {
             return null;
@@ -617,9 +619,8 @@ public abstract class PulsarWebResource {
             if (!cluster.isPresent() || cluster.get().getPeerClusterNames() == null) {
                 return null;
             }
-            Set<String> replicationClusterSet = Sets.newHashSet(replicationClusters);
             for (String peerCluster : cluster.get().getPeerClusterNames()) {
-                if (replicationClusterSet.contains(peerCluster)) {
+                if (replicationClusters.contains(peerCluster)) {
                     return pulsar.getConfigurationCache().clustersCache().get(path("clusters", peerCluster))
                             .orElseThrow(() -> new RestException(Status.NOT_FOUND,
                                     "Peer cluster " + peerCluster + " data not found"));

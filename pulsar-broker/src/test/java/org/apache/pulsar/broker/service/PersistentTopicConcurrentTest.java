@@ -49,6 +49,7 @@ import org.apache.pulsar.broker.service.ServerCnx;
 import org.apache.pulsar.broker.service.persistent.PersistentSubscription;
 import org.apache.pulsar.broker.service.persistent.PersistentTopic;
 import org.apache.pulsar.common.api.proto.PulsarApi;
+import org.apache.pulsar.common.api.proto.PulsarApi.CommandSubscribe.InitialPosition;
 import org.apache.pulsar.common.naming.TopicName;
 import org.apache.pulsar.common.naming.NamespaceBundle;
 import org.apache.pulsar.common.util.collections.ConcurrentOpenHashMap;
@@ -116,13 +117,13 @@ public class PersistentTopicConcurrentTest extends MockedBookKeeperTestCase {
     // @Test
     public void testConcurrentTopicAndSubscriptionDelete() throws Exception {
         // create topic
-        final PersistentTopic topic = (PersistentTopic) brokerService.getTopic(successTopicName).get();
+        final PersistentTopic topic = (PersistentTopic) brokerService.getOrCreateTopic(successTopicName).get();
         PulsarApi.CommandSubscribe cmd = PulsarApi.CommandSubscribe.newBuilder().setConsumerId(1)
                 .setTopic(successTopicName).setSubscription(successSubName).setRequestId(1)
                 .setSubType(PulsarApi.CommandSubscribe.SubType.Exclusive).build();
 
         Future<Consumer> f1 = topic.subscribe(serverCnx, cmd.getSubscription(), cmd.getConsumerId(), cmd.getSubType(),
-                0, cmd.getConsumerName(), cmd.getDurable(), null, Collections.emptyMap(), cmd.getReadCompacted());
+                0, cmd.getConsumerName(), cmd.getDurable(), null, Collections.emptyMap(), cmd.getReadCompacted(), InitialPosition.Latest);
         f1.get();
 
         final CyclicBarrier barrier = new CyclicBarrier(2);
@@ -174,13 +175,13 @@ public class PersistentTopicConcurrentTest extends MockedBookKeeperTestCase {
     // @Test
     public void testConcurrentTopicGCAndSubscriptionDelete() throws Exception {
         // create topic
-        final PersistentTopic topic = (PersistentTopic) brokerService.getTopic(successTopicName).get();
+        final PersistentTopic topic = (PersistentTopic) brokerService.getOrCreateTopic(successTopicName).get();
         PulsarApi.CommandSubscribe cmd = PulsarApi.CommandSubscribe.newBuilder().setConsumerId(1)
                 .setTopic(successTopicName).setSubscription(successSubName).setRequestId(1)
                 .setSubType(PulsarApi.CommandSubscribe.SubType.Exclusive).build();
 
         Future<Consumer> f1 = topic.subscribe(serverCnx, cmd.getSubscription(), cmd.getConsumerId(), cmd.getSubType(),
-                0, cmd.getConsumerName(), cmd.getDurable(), null, Collections.emptyMap(), cmd.getReadCompacted());
+                0, cmd.getConsumerName(), cmd.getDurable(), null, Collections.emptyMap(), cmd.getReadCompacted(), InitialPosition.Latest);
         f1.get();
 
         final CyclicBarrier barrier = new CyclicBarrier(2);
@@ -236,13 +237,13 @@ public class PersistentTopicConcurrentTest extends MockedBookKeeperTestCase {
     // @Test
     public void testConcurrentTopicDeleteAndUnsubscribe() throws Exception {
         // create topic
-        final PersistentTopic topic = (PersistentTopic) brokerService.getTopic(successTopicName).get();
+        final PersistentTopic topic = (PersistentTopic) brokerService.getOrCreateTopic(successTopicName).get();
         PulsarApi.CommandSubscribe cmd = PulsarApi.CommandSubscribe.newBuilder().setConsumerId(1)
                 .setTopic(successTopicName).setSubscription(successSubName).setRequestId(1)
                 .setSubType(PulsarApi.CommandSubscribe.SubType.Exclusive).build();
 
         Future<Consumer> f1 = topic.subscribe(serverCnx, cmd.getSubscription(), cmd.getConsumerId(), cmd.getSubType(),
-                0, cmd.getConsumerName(), cmd.getDurable(), null, Collections.emptyMap(), cmd.getReadCompacted());
+                0, cmd.getConsumerName(), cmd.getDurable(), null, Collections.emptyMap(), cmd.getReadCompacted(), InitialPosition.Latest);
         f1.get();
 
         final CyclicBarrier barrier = new CyclicBarrier(2);
@@ -294,13 +295,13 @@ public class PersistentTopicConcurrentTest extends MockedBookKeeperTestCase {
     // @Test
     public void testConcurrentTopicDeleteAndSubsUnsubscribe() throws Exception {
         // create topic
-        final PersistentTopic topic = (PersistentTopic) brokerService.getTopic(successTopicName).get();
+        final PersistentTopic topic = (PersistentTopic) brokerService.getOrCreateTopic(successTopicName).get();
         PulsarApi.CommandSubscribe cmd = PulsarApi.CommandSubscribe.newBuilder().setConsumerId(1)
                 .setTopic(successTopicName).setSubscription(successSubName).setRequestId(1)
                 .setSubType(PulsarApi.CommandSubscribe.SubType.Exclusive).build();
 
         Future<Consumer> f1 = topic.subscribe(serverCnx, cmd.getSubscription(), cmd.getConsumerId(), cmd.getSubType(),
-                0, cmd.getConsumerName(), cmd.getDurable(), null, Collections.emptyMap(), cmd.getReadCompacted());
+                0, cmd.getConsumerName(), cmd.getDurable(), null, Collections.emptyMap(), cmd.getReadCompacted(), InitialPosition.Latest);
         f1.get();
 
         final CyclicBarrier barrier = new CyclicBarrier(2);

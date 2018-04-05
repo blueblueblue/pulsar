@@ -61,7 +61,7 @@ public class ChecksumTest extends BrokerTestBase {
 
         Producer<byte[]> producer = pulsarClient.newProducer().topic(topicName).create();
 
-        PersistentTopic topic = (PersistentTopic) pulsar.getBrokerService().getTopicReference(topicName);
+        PersistentTopic topic = (PersistentTopic) pulsar.getBrokerService().getTopicReference(topicName).get();
 
         ManagedLedger ledger = topic.getManagedLedger();
         ManagedCursor cursor = ledger.openCursor("test");
@@ -74,7 +74,7 @@ public class ChecksumTest extends BrokerTestBase {
         ByteBuf b = entries.get(0).getDataBuffer();
 
         assertTrue(Commands.hasChecksum(b));
-        int parsedChecksum = Commands.readChecksum(b).intValue();
+        int parsedChecksum = Commands.readChecksum(b);
         int computedChecksum = Crc32cIntChecksum.computeChecksum(b);
         assertEquals(parsedChecksum, computedChecksum);
 
@@ -95,7 +95,7 @@ public class ChecksumTest extends BrokerTestBase {
 
         ByteBuf b = msg.getHeadersAndPayload();
         assertTrue(Commands.hasChecksum(b));
-        int parsedChecksum = Commands.readChecksum(b).intValue();
+        int parsedChecksum = Commands.readChecksum(b);
         int computedChecksum = Crc32cIntChecksum.computeChecksum(b);
         assertEquals(parsedChecksum, computedChecksum);
 

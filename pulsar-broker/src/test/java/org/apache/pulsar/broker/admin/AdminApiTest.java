@@ -18,16 +18,21 @@
  */
 package org.apache.pulsar.broker.admin;
 
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotEquals;
+import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
 
 import java.lang.reflect.Field;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
@@ -35,6 +40,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import javax.ws.rs.client.InvocationCallback;
@@ -56,7 +63,6 @@ import org.apache.pulsar.client.admin.PulsarAdminException.PreconditionFailedExc
 import org.apache.pulsar.client.admin.internal.LookupImpl;
 import org.apache.pulsar.client.admin.internal.PersistentTopicsImpl;
 import org.apache.pulsar.client.admin.internal.PropertiesImpl;
-import org.apache.pulsar.client.api.ClientConfiguration;
 import org.apache.pulsar.client.api.Consumer;
 import org.apache.pulsar.client.api.ConsumerBuilder;
 import org.apache.pulsar.client.api.Message;
@@ -91,6 +97,7 @@ import org.apache.pulsar.common.policies.data.PropertyAdmin;
 import org.apache.pulsar.common.policies.data.RetentionPolicies;
 import org.apache.pulsar.common.util.Codec;
 import org.apache.pulsar.common.util.ObjectMapperFactory;
+import org.apache.pulsar.compaction.Compactor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testng.Assert;
@@ -106,6 +113,9 @@ import com.google.common.collect.Range;
 import com.google.common.collect.Sets;
 import com.google.common.hash.Hashing;
 
+import lombok.extern.slf4j.Slf4j;
+
+@Slf4j
 public class AdminApiTest extends MockedPulsarServiceBaseTest {
 
     private static final Logger LOG = LoggerFactory.getLogger(AdminApiTest.class);
@@ -134,10 +144,8 @@ public class AdminApiTest extends MockedPulsarServiceBaseTest {
 
         bundleFactory = new NamespaceBundleFactory(pulsar, Hashing.crc32());
 
-        ClientConfiguration clientConf = new ClientConfiguration();
-        clientConf.setUseTls(true);
-        clientConf.setTlsTrustCertsFilePath(TLS_SERVER_CERT_FILE_PATH);
-        adminTls = spy(new PulsarAdmin(brokerUrlTls, clientConf));
+        adminTls = spy(PulsarAdmin.builder().tlsTrustCertsFilePath(TLS_SERVER_CERT_FILE_PATH)
+                .serviceHttpUrl(brokerUrlTls.toString()).build());
 
         // create otherbroker to test redirect on calls that need
         // namespace ownership
@@ -148,7 +156,7 @@ public class AdminApiTest extends MockedPulsarServiceBaseTest {
 
         // Setup namespaces
         admin.clusters().createCluster("use", new ClusterData("http://127.0.0.1" + ":" + BROKER_WEBSERVICE_PORT));
-        PropertyAdmin propertyAdmin = new PropertyAdmin(Lists.newArrayList("role1", "role2"), Sets.newHashSet("use"));
+        PropertyAdmin propertyAdmin = new PropertyAdmin(Sets.newHashSet("role1", "role2"), Sets.newHashSet("use"));
         admin.properties().createProperty("prop-xyz", propertyAdmin);
         admin.namespaces().createNamespace("prop-xyz/use/ns1");
     }
@@ -187,21 +195,21 @@ public class AdminApiTest extends MockedPulsarServiceBaseTest {
                 new ClusterData("http://broker.messaging.use.example.com" + ":" + BROKER_WEBSERVICE_PORT));
         // "test" cluster is part of config-default cluster and it's znode gets created when PulsarService creates
         // failure-domain znode of this default cluster
-        assertEquals(admin.clusters().getClusters(), Lists.newArrayList("test", "use", "usw"));
+        assertEquals(admin.clusters().getClusters(), Lists.newArrayList("use", "usw"));
 
         assertEquals(admin.clusters().getCluster("use"),
                 new ClusterData("http://127.0.0.1" + ":" + BROKER_WEBSERVICE_PORT));
 
         admin.clusters().updateCluster("usw",
                 new ClusterData("http://new-broker.messaging.usw.example.com" + ":" + BROKER_WEBSERVICE_PORT));
-        assertEquals(admin.clusters().getClusters(), Lists.newArrayList("test", "use", "usw"));
+        assertEquals(admin.clusters().getClusters(), Lists.newArrayList("use", "usw"));
         assertEquals(admin.clusters().getCluster("usw"),
                 new ClusterData("http://new-broker.messaging.usw.example.com" + ":" + BROKER_WEBSERVICE_PORT));
 
         admin.clusters().updateCluster("usw",
                 new ClusterData("http://new-broker.messaging.usw.example.com" + ":" + BROKER_WEBSERVICE_PORT,
                         "https://new-broker.messaging.usw.example.com" + ":" + BROKER_WEBSERVICE_PORT_TLS));
-        assertEquals(admin.clusters().getClusters(), Lists.newArrayList("test", "use", "usw"));
+        assertEquals(admin.clusters().getClusters(), Lists.newArrayList("use", "usw"));
         assertEquals(admin.clusters().getCluster("usw"),
                 new ClusterData("http://new-broker.messaging.usw.example.com" + ":" + BROKER_WEBSERVICE_PORT,
                         "https://new-broker.messaging.usw.example.com" + ":" + BROKER_WEBSERVICE_PORT_TLS));
@@ -209,11 +217,11 @@ public class AdminApiTest extends MockedPulsarServiceBaseTest {
         admin.clusters().deleteCluster("usw");
         Thread.sleep(300);
 
-        assertEquals(admin.clusters().getClusters(), Lists.newArrayList("test", "use"));
+        assertEquals(admin.clusters().getClusters(), Lists.newArrayList("use"));
 
         admin.namespaces().deleteNamespace("prop-xyz/use/ns1");
         admin.clusters().deleteCluster("use");
-        assertEquals(admin.clusters().getClusters(), Lists.newArrayList("test"));
+        assertEquals(admin.clusters().getClusters(), Lists.newArrayList());
 
         // Check name validation
         try {
@@ -403,9 +411,7 @@ public class AdminApiTest extends MockedPulsarServiceBaseTest {
 
         admin.namespaces().deleteNamespace("prop-xyz/use/ns1");
         admin.clusters().deleteCluster("use");
-        // "test" cluster is part of config-default cluster and it's znode gets created when PulsarService creates
-        // failure-domain znode of this default cluster
-        assertEquals(admin.clusters().getClusters(), Lists.newArrayList("test"));
+        assertEquals(admin.clusters().getClusters(), Lists.newArrayList());
     }
 
     /**
@@ -553,14 +559,14 @@ public class AdminApiTest extends MockedPulsarServiceBaseTest {
     @Test(enabled = true)
     public void properties() throws PulsarAdminException {
         Set<String> allowedClusters = Sets.newHashSet("use");
-        PropertyAdmin propertyAdmin = new PropertyAdmin(Lists.newArrayList("role1", "role2"), allowedClusters);
+        PropertyAdmin propertyAdmin = new PropertyAdmin(Sets.newHashSet("role1", "role2"), allowedClusters);
         admin.properties().updateProperty("prop-xyz", propertyAdmin);
 
         assertEquals(admin.properties().getProperties(), Lists.newArrayList("prop-xyz"));
 
         assertEquals(admin.properties().getPropertyAdmin("prop-xyz"), propertyAdmin);
 
-        PropertyAdmin newPropertyAdmin = new PropertyAdmin(Lists.newArrayList("role3", "role4"), allowedClusters);
+        PropertyAdmin newPropertyAdmin = new PropertyAdmin(Sets.newHashSet("role3", "role4"), allowedClusters);
         admin.properties().updateProperty("prop-xyz", newPropertyAdmin);
 
         assertEquals(admin.properties().getPropertyAdmin("prop-xyz"), newPropertyAdmin);
@@ -581,7 +587,7 @@ public class AdminApiTest extends MockedPulsarServiceBaseTest {
     @Test(invocationCount = 1)
     public void namespaces() throws PulsarAdminException, PulsarServerException, Exception {
         admin.clusters().createCluster("usw", new ClusterData());
-        PropertyAdmin propertyAdmin = new PropertyAdmin(Lists.newArrayList("role1", "role2"),
+        PropertyAdmin propertyAdmin = new PropertyAdmin(Sets.newHashSet("role1", "role2"),
                 Sets.newHashSet("use", "usw"));
         admin.properties().updateProperty("prop-xyz", propertyAdmin);
 
@@ -927,6 +933,115 @@ public class AdminApiTest extends MockedPulsarServiceBaseTest {
         String[] splitRange = { namespace + "/0x00000000_0x7fffffff", namespace + "/0x7fffffff_0xffffffff" };
         for (int i = 0; i < bundles.getBundles().size(); i++) {
             assertEquals(bundles.getBundles().get(i).toString(), splitRange[i]);
+        }
+
+        producer.close();
+    }
+
+    @Test
+    public void testNamespaceSplitBundleConcurrent() throws Exception {
+        // Force to create a topic
+        final String namespace = "prop-xyz/use/ns1";
+        final String topicName = (new StringBuilder("persistent://")).append(namespace).append("/ds2").toString();
+        Producer<byte[]> producer = pulsarClient.newProducer().topic(topicName).create();
+        producer.send("message".getBytes());
+        publishMessagesOnPersistentTopic(topicName, 0);
+        assertEquals(admin.persistentTopics().getList(namespace), Lists.newArrayList(topicName));
+
+        try {
+            admin.namespaces().splitNamespaceBundle(namespace, "0x00000000_0xffffffff", false);
+        } catch (Exception e) {
+            fail("split bundle shouldn't have thrown exception");
+        }
+
+        // bundle-factory cache must have updated split bundles
+        NamespaceBundles bundles = bundleFactory.getBundles(NamespaceName.get(namespace));
+        String[] splitRange = {namespace + "/0x00000000_0x7fffffff", namespace + "/0x7fffffff_0xffffffff"};
+        for (int i = 0; i < bundles.getBundles().size(); i++) {
+            assertEquals(bundles.getBundles().get(i).toString(), splitRange[i]);
+        }
+
+        ExecutorService executorService = Executors.newCachedThreadPool();
+
+
+        try {
+            executorService.invokeAll(
+                Arrays.asList(
+                    () ->
+                    {
+                        log.info("split 2 bundles at the same time. spilt: 0x00000000_0x7fffffff ");
+                        admin.namespaces().splitNamespaceBundle(namespace, "0x00000000_0x7fffffff", false);
+                        return null;
+                    },
+                    () ->
+                    {
+                        log.info("split 2 bundles at the same time. spilt: 0x7fffffff_0xffffffff ");
+                        admin.namespaces().splitNamespaceBundle(namespace, "0x7fffffff_0xffffffff", false);
+                        return null;
+                    }
+                )
+            );
+        } catch (Exception e) {
+            fail("split bundle shouldn't have thrown exception");
+        }
+
+        String[] splitRange4 = {
+            namespace + "/0x00000000_0x3fffffff",
+            namespace + "/0x3fffffff_0x7fffffff",
+            namespace + "/0x7fffffff_0xbfffffff",
+            namespace + "/0xbfffffff_0xffffffff"};
+        bundles = bundleFactory.getBundles(NamespaceName.get(namespace));
+        assertEquals(bundles.getBundles().size(), 4);
+        for (int i = 0; i < bundles.getBundles().size(); i++) {
+            assertEquals(bundles.getBundles().get(i).toString(), splitRange4[i]);
+        }
+
+        try {
+            executorService.invokeAll(
+                Arrays.asList(
+                    () ->
+                    {
+                        log.info("split 4 bundles at the same time. spilt: 0x00000000_0x3fffffff ");
+                        admin.namespaces().splitNamespaceBundle(namespace, "0x00000000_0x3fffffff", false);
+                        return null;
+                    },
+                    () ->
+                    {
+                        log.info("split 4 bundles at the same time. spilt: 0x3fffffff_0x7fffffff ");
+                        admin.namespaces().splitNamespaceBundle(namespace, "0x3fffffff_0x7fffffff", false);
+                        return null;
+                    },
+                    () ->
+                    {
+                        log.info("split 4 bundles at the same time. spilt: 0x7fffffff_0xbfffffff ");
+                        admin.namespaces().splitNamespaceBundle(namespace, "0x7fffffff_0xbfffffff", false);
+                        return null;
+                    },
+                    () ->
+                    {
+                        log.info("split 4 bundles at the same time. spilt: 0xbfffffff_0xffffffff ");
+                        admin.namespaces().splitNamespaceBundle(namespace, "0xbfffffff_0xffffffff", false);
+                        return null;
+                    }
+                )
+            );
+        } catch (Exception e) {
+            fail("split bundle shouldn't have thrown exception");
+        }
+
+        String[] splitRange8 = {
+            namespace + "/0x00000000_0x1fffffff",
+            namespace + "/0x1fffffff_0x3fffffff",
+            namespace + "/0x3fffffff_0x5fffffff",
+            namespace + "/0x5fffffff_0x7fffffff",
+            namespace + "/0x7fffffff_0x9fffffff",
+            namespace + "/0x9fffffff_0xbfffffff",
+            namespace + "/0xbfffffff_0xdfffffff",
+            namespace + "/0xdfffffff_0xffffffff"};
+        bundles = bundleFactory.getBundles(NamespaceName.get(namespace));
+        assertEquals(bundles.getBundles().size(), 8);
+        for (int i = 0; i < bundles.getBundles().size(); i++) {
+            assertEquals(bundles.getBundles().get(i).toString(), splitRange8[i]);
         }
 
         producer.close();
@@ -1288,7 +1403,7 @@ public class AdminApiTest extends MockedPulsarServiceBaseTest {
 
         // create consumer and subscription
         Consumer<byte[]> consumer = pulsarClient.newConsumer().topic(topicName).subscriptionName("my-sub")
-                .subscriptionType(SubscriptionType.Exclusive).subscribe();
+                .subscriptionType(SubscriptionType.Exclusive).acknowledmentGroupTime(0, TimeUnit.SECONDS).subscribe();
 
         assertEquals(admin.persistentTopics().getSubscriptions(topicName), Lists.newArrayList("my-sub"));
 
@@ -1339,7 +1454,7 @@ public class AdminApiTest extends MockedPulsarServiceBaseTest {
 
         // create consumer and subscription
         Consumer<byte[]> consumer = pulsarClient.newConsumer().topic(topicName).subscriptionName("my-sub")
-                .subscriptionType(SubscriptionType.Exclusive).subscribe();
+                .subscriptionType(SubscriptionType.Exclusive).acknowledmentGroupTime(0, TimeUnit.SECONDS).subscribe();
 
         assertEquals(admin.persistentTopics().getSubscriptions(topicName), Lists.newArrayList("my-sub"));
 
@@ -1410,7 +1525,7 @@ public class AdminApiTest extends MockedPulsarServiceBaseTest {
 
         // create consumer and subscription
         Consumer<byte[]> consumer = pulsarClient.newConsumer().topic(topicName).subscriptionName("my-sub")
-                .subscriptionType(SubscriptionType.Exclusive).subscribe();
+                .subscriptionType(SubscriptionType.Exclusive).acknowledmentGroupTime(0, TimeUnit.SECONDS).subscribe();
 
         List<String> topics = admin.persistentTopics().getList("prop-xyz/use/ns1");
         assertEquals(topics.size(), 4);
@@ -1504,7 +1619,7 @@ public class AdminApiTest extends MockedPulsarServiceBaseTest {
             public int newProperty;
         }
 
-        PropertyAdmin pa = new PropertyAdmin(Lists.newArrayList("test_appid1", "test_appid2"), Sets.newHashSet("use"));
+        PropertyAdmin pa = new PropertyAdmin(Sets.newHashSet("test_appid1", "test_appid2"), Sets.newHashSet("use"));
         CustomPropertyAdmin cpa = new CustomPropertyAdmin();
         cpa.setAdminRoles(pa.getAdminRoles());
         cpa.setAllowedClusters(pa.getAllowedClusters());
@@ -1766,7 +1881,7 @@ public class AdminApiTest extends MockedPulsarServiceBaseTest {
     @Test
     public void testTopicBundleRangeLookup() throws PulsarAdminException, PulsarServerException, Exception {
         admin.clusters().createCluster("usw", new ClusterData());
-        PropertyAdmin propertyAdmin = new PropertyAdmin(Lists.newArrayList("role1", "role2"),
+        PropertyAdmin propertyAdmin = new PropertyAdmin(Sets.newHashSet("role1", "role2"),
                 Sets.newHashSet("use", "usw"));
         admin.properties().updateProperty("prop-xyz", propertyAdmin);
         admin.namespaces().createNamespace("prop-xyz/use/getBundleNs", 100);
@@ -1776,6 +1891,40 @@ public class AdminApiTest extends MockedPulsarServiceBaseTest {
         final String topicName = "persistent://prop-xyz/use/getBundleNs/topic1";
         String bundleRange = admin.lookups().getBundleRange(topicName);
         assertEquals(bundleRange, pulsar.getNamespaceService().getBundle(TopicName.get(topicName)).getBundleRange());
+    }
+
+    @Test
+    public void testTriggerCompaction() throws Exception {
+        String topicName = "persistent://prop-xyz/use/ns1/topic1";
+
+        // create a topic by creating a producer
+        pulsarClient.newProducer().topic(topicName).create().close();
+        assertNotNull(pulsar.getBrokerService().getTopicReference(topicName));
+
+        // mock actual compaction, we don't need to really run it
+        CompletableFuture<Long> promise = new CompletableFuture<Long>();
+        Compactor compactor = pulsar.getCompactor();
+        doReturn(promise).when(compactor).compact(topicName);
+        admin.persistentTopics().triggerCompaction(topicName);
+
+        // verify compact called once
+        verify(compactor).compact(topicName);
+        try {
+            admin.persistentTopics().triggerCompaction(topicName);
+
+            fail("Shouldn't be able to run while already running");
+        } catch (ConflictException e) {
+            // expected
+        }
+        // compact shouldn't have been called again
+        verify(compactor).compact(topicName);
+
+        // complete first compaction, and trigger again
+        promise.complete(1L);
+        admin.persistentTopics().triggerCompaction(topicName);
+
+        // verify compact was called again
+        verify(compactor, times(2)).compact(topicName);
     }
 
 }
