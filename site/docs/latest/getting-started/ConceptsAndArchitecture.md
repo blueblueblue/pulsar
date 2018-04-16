@@ -3,6 +3,7 @@ title: Pulsar concepts and architecture
 lead: A high-level overview of Pulsar's moving pieces
 tags:
 - architecture
+- deduplication
 ---
 
 <!--
@@ -107,7 +108,7 @@ As in other pub-sub systems, topics in Pulsar are named channels for transmittin
 | `topic`              | The final part of the name. Topic names are freeform and have no special meaning in a Pulsar instance.                                                                                                                                       |
 
 {% include admonition.html type="success" title="No need to explicitly create new topics"
-content="Application does not explicitly create the topic but attempting to write or receive message on a topic that does not yet exist, Pulsar will automatically create that topic under the [namespace](#namespace)." %}
+content="You don't need to explicitly create topics in Pulsar. If a client attempts to write or receive messages to/from a topic that does not yet exist, Pulsar will automatically create that topic under the [namespace](#namespace) provided in the [topic name](#topics)." %}
 
 ### Namespace
 
@@ -191,6 +192,52 @@ For code examples, see:
 
 {% include explanations/non-persistent-topics.md %}
 
+{% include admonition.html type="success" content='For more info on using non-persistent topics, see the [Non-persistent messaging cookbook](../../cookbooks/non-persistent-topics).' %}
+
+In non-persistent topics, {% popover brokers %} immediately deliver messages to all connected subscribers *without persisting them* in [BookKeeper](#persistent-storage). If a subscriber is disconnected, the broker will not be able to deliver those in-transit messages, and subscribers will never be able to receive those messages again. Eliminating the persistent storage step makes messaging on non-persistent topics slightly faster than on persistent topics in some cases, but with the caveat that some of the core benefits of Pulsar are lost.
+
+{% include admonition.html type="danger" content="With non-persistent topics, message data lives only in memory. If a message broker fails or message data can otherwise not be retrieved from memory, your message data may be lost. Use non-persistent topics only if you're *certain* that your use case requires it and can sustain it." %}
+
+By default, non-persistent topics are enabled on Pulsar {% popover brokers %}. You can disable them in the broker's [configuration](../../reference/Configuration#broker-enableNonPersistentTopics). You can manage non-persistent topics using the [`pulsar-admin non-persistent`](../../reference/CliTools#pulsar-admin-non-persistent) interface.
+
+#### Performance
+
+Non-persistent messaging is usually faster than persistent messaging because brokers don't persist messages and immediately send acks back to the producer as soon as that message is deliver to all connected subscribers. Producers thus see comparatively low publish latency with non-persistent topic.
+
+#### Client API
+
+Producers and consumers can connect to non-persistent topics in the same way as persistent topics, with the crucial difference that the topic name must start with `non-persistent`. All three subscription modes---[exclusive](#exclusive), [shared](#shared), and [failover](#failover)---are supported for non-persistent topics.
+
+Here's an example [Java consumer](../../clients/Java#consumer) for a non-persistent topic:
+
+```java
+PulsarClient client = PulsarClient.create("pulsar://localhost:6650");
+String npTopic = "non-persistent://sample/standalone/ns1/my-topic";
+String subscriptionName = "my-subscription-name";
+
+Consumer consumer = client.subscribe(npTopic, subscriptionName);
+```
+
+Here's an example [Java producer](../../clients/Java#producer) for the same non-persistent topic:
+
+```java
+Producer producer = client.createProducer(npTopic);
+```
+
+#### Broker configuration
+
+Sometimes, there would be a need to configure few dedicated brokers in a cluster, to just serve non-persistent topics.
+
+Broker configuration for enabling broker to own only configured type of topics  
+
+```
+# It disables broker to load persistent topics
+enablePersistentTopics=false
+# It enables broker to load non-persistent topics
+enableNonPersistentTopics=true
+```
+
+
 ## Architecture overview
 
 At the highest level, a Pulsar {% popover instance %} is composed of one or more Pulsar {% popover clusters %}. Clusters within an instance can [replicate](#replicate) data amongst themselves.
@@ -251,11 +298,11 @@ When creating a [new cluster](../../admin/ClustersBrokers#initialize-cluster-met
 
 ## Persistent storage
 
-![Brokers and bookies](/img/broker-bookie.png)
-
 Pulsar provides guaranteed message delivery for applications. If a message successfully reaches a Pulsar {% popover broker %}, it will be delivered to its intended target.
 
 This guarantee requires that non-{% popover acknowledged %} messages are stored in a durable manner until they can be delivered to and acknowledged by {% popover consumers %}. This mode of messaging is commonly called *persistent messaging*. In Pulsar, N copies of all messages are stored and synced on disk, for example 4 copies across two servers with mirrored [RAID](https://en.wikipedia.org/wiki/RAID) volumes on each server.
+
+### Apache BookKeeper {#bookkeeper}
 
 Pulsar uses a system called [Apache BookKeeper](http://bookkeeper.apache.org/) for persistent message storage. BookKeeper is a distributed [write-ahead log](https://en.wikipedia.org/wiki/Write-ahead_logging) (WAL) system that provides a number of crucial advantages for Pulsar:
 
@@ -272,7 +319,11 @@ At the moment, Pulsar only supports persistent message storage. This accounts fo
 
 {% include topic.html p="my-property" c="global" n="my-namespace" t="my-topic" %}
 
-In the future, Pulsar will support ephemeral message storage.
+{% include admonition.html type="success" content='Pulsar also supports ephemeral ([non-persistent](#non-persistent-topics)) message storage.' %}
+
+You can see an illustration of how {% popover brokers %} and {% popover bookies %} interact in the diagram below:
+
+![Brokers and bookies](/img/broker-bookie.png)
 
 ### Ledgers
 
@@ -315,7 +366,7 @@ Pulsar has two features, however, that enable you to override this default behav
 * Message **retention** enables you to store messages that have been acknowledged by a consumer
 * Message **expiry** enables you to set a time to live (TTL) for messages that have not yet been acknowledged
 
-{% include admonition.html type="info" content='All message retention and expiry is managed at the [namespace](#namespaces) level. For a how-to, see the [Message retention and expiry](../../advanced/RetentionExpiry) admin documentation.' %}
+{% include admonition.html type="info" content='All message retention and expiry is managed at the [namespace](#namespaces) level. For a how-to, see the [Message retention and expiry](../../cookbooks/RetentionExpiry) cookbook.' %}
 
 The diagram below illustrates both concepts:
 
@@ -333,9 +384,35 @@ For an in-depth look at Pulsar Functions, see the [Pulsar Functions overview](..
 
 Pulsar enables messages to be produced and consumed in different geo-locations. For instance, your application may be publishing data in one region or market and you would like to process it for consumption in other regions or markets. [Geo-replication](../../admin/GeoReplication) in Pulsar enables you to do that.
 
+## Message deduplication
+
+Message **duplication** occurs when a message is [persisted](#persistent-storage) by Pulsar more than once. Message ***de*duplication** is an optional Pulsar feature that prevents unnecessary message duplication by processing each message only once, *even if the message is received more than once*.
+
+The following diagram illustrates what happens when message deduplication is disabled vs. enabled:
+
+{% img /img/message-deduplication.png 75 %}
+
+Message deduplication is disabled in the scenario shown at the top. Here, a producer publishes message 1 on a topic; the message reaches a Pulsar {% popover broker %} and is [persisted](#persistent-storage) to BookKeeper. The producer then sends message 1 again (in this case due to some retry logic), and the message is received by the broker and stored in BookKeeper again, which means that duplication has occurred.
+
+In the second scenario at the bottom, the producer publishes message 1, which is received by the broker and persisted, as in the first scenario. When the producer attempts to publish the message again, however, the broker knows that it has already seen message 1 and thus does not persist the message.
+
+{% include admonition.html type="info" content='Message deduplication is handled at the namespace level. For more instructions, see the [message deduplication cookbook](../../cookbooks/message-deduplication).' %}
+
+### Producer idempotency
+
+The other available approach to message deduplication is to ensure that each message is *only produced once*. This approach is typically called **producer idempotency**. The drawback of this approach is that it defers the work of message deduplication to the application. In Pulsar, this is handled at the {% popover broker %} level, which means that you don't need to modify your Pulsar client code. Instead, you only need to make administrative changes (see the [Managing message deduplication](../../cookbooks/message-deduplication) cookbook for a guide).
+
+### Deduplication and effectively-once semantics
+
+Message deduplication makes Pulsar an ideal messaging system to be used in conjunction with stream processing engines (SPEs) and other systems seeking to provide [effectively-once](https://blog.streaml.io/exactly-once/) processing semantics. Messaging systems that don't offer automatic message deduplication require the SPE or other system to guarantee deduplication, which means that strict message ordering comes at the cost of burdening the application with the responsibility of deduplication. With Pulsar, strict ordering guarantees come at no application-level cost.
+
+{% include admonition.html type="info" content='
+More in-depth information can be found in [this post](https://blog.streaml.io/pulsar-effectively-once/) on the [Streamlio blog](https://blog.streaml.io).
+' %}
+
 ## Multi-tenancy
 
-Pulsar was created from the ground up as a {% popover multi-tenant %} system. To support multi-tenancy, Pulsar has a concept of {% popover properties %}. Properties can be spread across {% popover clusters %} and can each have their own [authentication and authorization](../../admin/Authz) scheme applied to them. They are also the administrative unit at which [storage quotas](TODO), [message TTL](../../advanced/RetentionExpiry#time-to-live-ttl), and isolation policies can be managed.
+Pulsar was created from the ground up as a {% popover multi-tenant %} system. To support multi-tenancy, Pulsar has a concept of {% popover properties %}. Properties can be spread across {% popover clusters %} and can each have their own [authentication and authorization](../../admin/Authz) scheme applied to them. They are also the administrative unit at which [storage quotas](TODO), [message TTL](../../cookbooks/RetentionExpiry#time-to-live-ttl), and isolation policies can be managed.
 
 The multi-tenant nature of Pulsar is reflected mostly visibly in topic URLs, which have this structure:
 
@@ -411,7 +488,7 @@ The **reader interface** for Pulsar enables applications to manually manage curs
 * The **latest** available message in the topic
 * Some other message between the earliest and the latest. If you select this option, you'll need to explicitly provide a message ID. Your application will be responsible for "knowing" this message ID in advance, perhaps fetching it from a persistent data store or cache.
 
-The reader interface is helpful for use cases like using Pulsar to provide [effectively-once](https://streaml.io/blog/exactly-once/) processing semantics for a stream processing system. For this use case, it's essential that the stream processing system be able to "rewind" topics to a specific message and begin reading there. The reader interface provides Pulsar clients with the low-level abstraction necessary to "manually position" themselves within a topic.
+The reader interface is helpful for use cases like using Pulsar to provide [effectively-once](https://blog.streaml.io/exactly-once/) processing semantics for a stream processing system. For this use case, it's essential that the stream processing system be able to "rewind" topics to a specific message and begin reading there. The reader interface provides Pulsar clients with the low-level abstraction necessary to "manually position" themselves within a topic.
 
 <img src="/img/pulsar-reader-consumer-interfaces.png" alt="The Pulsar consumer and reader interfaces" width="80%">
 

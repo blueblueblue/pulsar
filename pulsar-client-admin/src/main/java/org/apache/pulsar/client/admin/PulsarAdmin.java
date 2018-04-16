@@ -33,12 +33,13 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.client.admin.internal.BrokerStatsImpl;
 import org.apache.pulsar.client.admin.internal.BrokersImpl;
 import org.apache.pulsar.client.admin.internal.ClustersImpl;
+import org.apache.pulsar.client.admin.internal.FunctionsImpl;
 import org.apache.pulsar.client.admin.internal.JacksonConfigurator;
 import org.apache.pulsar.client.admin.internal.LookupImpl;
 import org.apache.pulsar.client.admin.internal.NamespacesImpl;
 import org.apache.pulsar.client.admin.internal.NonPersistentTopicsImpl;
 import org.apache.pulsar.client.admin.internal.PersistentTopicsImpl;
-import org.apache.pulsar.client.admin.internal.PropertiesImpl;
+import org.apache.pulsar.client.admin.internal.TenantsImpl;
 import org.apache.pulsar.client.admin.internal.PulsarAdminBuilderImpl;
 import org.apache.pulsar.client.admin.internal.ResourceQuotasImpl;
 import org.apache.pulsar.client.api.Authentication;
@@ -67,6 +68,7 @@ public class PulsarAdmin implements Closeable {
     private final Clusters clusters;
     private final Brokers brokers;
     private final BrokerStats brokerStats;
+    private final Tenants tenants;
     private final Properties properties;
     private final Namespaces namespaces;
     private final PersistentTopics persistentTopics;
@@ -76,6 +78,7 @@ public class PulsarAdmin implements Closeable {
     private final Client client;
     private final String serviceUrl;
     private final Lookup lookups;
+    private final Functions functions;
     protected final WebTarget root;
     protected final Authentication auth;
 
@@ -164,12 +167,14 @@ public class PulsarAdmin implements Closeable {
         this.clusters = new ClustersImpl(root, auth);
         this.brokers = new BrokersImpl(root, auth);
         this.brokerStats = new BrokerStatsImpl(root, auth);
-        this.properties = new PropertiesImpl(root, auth);
+        this.tenants = new TenantsImpl(root, auth);
+        this.properties = new TenantsImpl(root, auth);;
         this.namespaces = new NamespacesImpl(root, auth);
         this.persistentTopics = new PersistentTopicsImpl(root, auth);
         this.nonPersistentTopics = new NonPersistentTopicsImpl(root, auth);
         this.resourceQuotas = new ResourceQuotasImpl(root, auth);
         this.lookups = new LookupImpl(root, auth, useTls);
+        this.functions = new FunctionsImpl(root, auth);
     }
 
     /**
@@ -262,8 +267,17 @@ public class PulsarAdmin implements Closeable {
     }
 
     /**
-     * @return the properties management object
+     * @return the tenants management object
      */
+    public Tenants tenants() {
+        return tenants;
+    }
+
+    /**
+     *
+     * @deprecated since 2.0. See {@link #tenants()}
+     */
+    @Deprecated
     public Properties properties() {
         return properties;
     }
@@ -301,6 +315,14 @@ public class PulsarAdmin implements Closeable {
      */
     public Lookup lookups() {
         return lookups;
+    }
+
+    /**
+     *
+     * @return the functions management object
+     */
+    public Functions functions() {
+        return functions;
     }
 
     /**

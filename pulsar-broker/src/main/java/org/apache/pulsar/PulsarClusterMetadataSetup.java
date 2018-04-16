@@ -20,13 +20,22 @@ package org.apache.pulsar;
 
 import static org.apache.pulsar.broker.cache.ConfigurationCacheService.POLICIES_ROOT;
 
+import com.beust.jcommander.JCommander;
+import com.beust.jcommander.Parameter;
+import com.google.common.collect.Lists;
+
 import java.io.IOException;
+import java.util.List;
 
 import org.apache.bookkeeper.client.BookKeeperAdmin;
 import org.apache.bookkeeper.conf.ServerConfiguration;
 import org.apache.bookkeeper.meta.HierarchicalLedgerManagerFactory;
 import org.apache.bookkeeper.util.ZkUtils;
+import org.apache.pulsar.common.naming.TopicName;
+import org.apache.pulsar.common.policies.data.BundlesData;
 import org.apache.pulsar.common.policies.data.ClusterData;
+import org.apache.pulsar.common.policies.data.Policies;
+import org.apache.pulsar.common.policies.data.TenantInfo;
 import org.apache.pulsar.common.util.ObjectMapperFactory;
 import org.apache.pulsar.zookeeper.ZooKeeperClientFactory;
 import org.apache.pulsar.zookeeper.ZooKeeperClientFactory.SessionType;
@@ -37,9 +46,6 @@ import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.ZooKeeper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.beust.jcommander.JCommander;
-import com.beust.jcommander.Parameter;
 
 /**
  * Setup the metadata for a new Pulsar cluster
@@ -143,7 +149,53 @@ public class PulsarClusterMetadataSetup {
             // Ignore
         }
 
+        // Create public tenant
+        TenantInfo publicTenant = new TenantInfo();
+        byte[] publicPropertyDataJson = ObjectMapperFactory.getThreadLocal().writeValueAsBytes(publicTenant);
+        try {
+            ZkUtils.createFullPathOptimistic(
+                globalZk,
+                POLICIES_ROOT + "/" + TopicName.PUBLIC_TENANT,
+                publicPropertyDataJson,
+                ZooDefs.Ids.OPEN_ACL_UNSAFE,
+                CreateMode.PERSISTENT);
+        } catch (NodeExistsException e) {
+            // Ignore
+        }
+
+        // Create default namespace
+        Policies policies = new Policies();
+        policies.bundles = getBundles(4);
+        byte[] defaultNamespaceDataJson = ObjectMapperFactory.getThreadLocal().writeValueAsBytes(policies);
+        try {
+            ZkUtils.createFullPathOptimistic(
+                globalZk,
+                POLICIES_ROOT + "/" + TopicName.PUBLIC_TENANT + "/" + TopicName.DEFAULT_NAMESPACE,
+                defaultNamespaceDataJson,
+                ZooDefs.Ids.OPEN_ACL_UNSAFE,
+                CreateMode.PERSISTENT);
+        } catch (NodeExistsException e) {
+            // Ignore
+        }
+
         log.info("Cluster metadata for '{}' setup correctly", arguments.cluster);
+    }
+
+    private static BundlesData getBundles(int numBundles) {
+        Long maxVal = ((long) 1) << 32;
+        Long segSize = maxVal / numBundles;
+        List<String> partitions = Lists.newArrayList();
+        partitions.add(String.format("0x%08x", 0l));
+        Long curPartition = segSize;
+        for (int i = 0; i < numBundles; i++) {
+            if (i != numBundles - 1) {
+                partitions.add(String.format("0x%08x", curPartition));
+            } else {
+                partitions.add(String.format("0x%08x", maxVal - 1));
+            }
+            curPartition += segSize;
+        }
+        return new BundlesData(partitions);
     }
 
     private static final Logger log = LoggerFactory.getLogger(PulsarClusterMetadataSetup.class);
