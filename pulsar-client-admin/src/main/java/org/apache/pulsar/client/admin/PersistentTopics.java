@@ -30,6 +30,7 @@ import org.apache.pulsar.client.admin.PulsarAdminException.NotFoundException;
 import org.apache.pulsar.client.admin.PulsarAdminException.PreconditionFailedException;
 import org.apache.pulsar.client.api.Message;
 import org.apache.pulsar.client.api.MessageId;
+import org.apache.pulsar.common.compaction.CompactionStatus;
 import org.apache.pulsar.common.partition.PartitionedTopicMetadata;
 import org.apache.pulsar.common.policies.data.AuthAction;
 import org.apache.pulsar.common.policies.data.PartitionedTopicStats;
@@ -47,8 +48,8 @@ public interface PersistentTopics {
      * Response example:
      *
      * <pre>
-     * <code>["topic://my-property/use/my-namespace/topic-1",
-     *  "topic://my-property/use/my-namespace/topic-2"]</code>
+     * <code>["topic://my-tenant/use/my-namespace/topic-1",
+     *  "topic://my-tenant/use/my-namespace/topic-2"]</code>
      * </pre>
      *
      * @param namespace
@@ -70,8 +71,8 @@ public interface PersistentTopics {
      * Response example:
      *
      * <pre>
-     * <code>["persistent://my-property/use/my-namespace/topic-1",
-     *  "persistent://my-property/use/my-namespace/topic-2"]</code>
+     * <code>["persistent://my-tenant/use/my-namespace/topic-1",
+     *  "persistent://my-tenant/use/my-namespace/topic-2"]</code>
      * </pre>
      *
      * @param namespace
@@ -909,4 +910,11 @@ public interface PersistentTopics {
      *            The topic on which to trigger compaction
      */
     void triggerCompaction(String topic) throws PulsarAdminException;
+
+    /**
+     * Check the status of an ongoing compaction for a topic.
+     *
+     * @param topic The topic whose compaction status we wish to check
+     */
+    CompactionStatus compactionStatus(String topic) throws PulsarAdminException;
 }
