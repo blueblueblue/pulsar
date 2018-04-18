@@ -357,17 +357,17 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
             isAllMsgsAcked = batchMessageId.ackCumulative();
         }
         int outstandingAcks = 0;
-        if (log.isDebugEnabled()) {
+//        if (log.isDebugEnabled()) {
             outstandingAcks = batchMessageId.getOutstandingAcksInSameBatch();
-        }
+//        }
 
         int batchSize = batchMessageId.getBatchSize();
         // all messages in this batch have been acked
         if (isAllMsgsAcked) {
-            if (log.isDebugEnabled()) {
-                log.debug("[{}] [{}] can ack message to broker {}, acktype {}, cardinality {}, length {}", subscription,
+//            if (log.isDebugEnabled()) {
+                log.info("[{}] [{}] can ack message to broker {}, acktype {}, cardinality {}, length {}", subscription,
                         consumerName, batchMessageId, ackType, outstandingAcks, batchSize);
-            }
+//            }
             // increment Acknowledge-msg counter with number of messages in batch only if AckType is Individual.
             // CumulativeAckType is handled while sending ack to broker
             if (ackType == AckType.Individual) {
@@ -380,10 +380,10 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                 sendAcknowledge(batchMessageId.prevBatchMessageId(), AckType.Cumulative, properties);
                 batchMessageId.getAcker().setPrevBatchCumulativelyAcked(true);
             }
-            if (log.isDebugEnabled()) {
-                log.debug("[{}] [{}] cannot ack message to broker {}, acktype {}, pending acks - {}", subscription,
+//            if (log.isDebugEnabled()) {
+                log.info("[{}] [{}] cannot ack message to broker {}, acktype {}, pending acks - {}", subscription,
                         consumerName, batchMessageId, ackType, outstandingAcks);
-            }
+//            }
         }
         return false;
     }
@@ -400,10 +400,10 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
         if (messageId instanceof BatchMessageIdImpl) {
             if (markAckForBatchMessage((BatchMessageIdImpl) messageId, ackType, properties)) {
                 // all messages in batch have been acked so broker can be acked via sendAcknowledge()
-                if (log.isDebugEnabled()) {
-                    log.debug("[{}] [{}] acknowledging message - {}, acktype {}", subscription, consumerName, messageId,
+//                if (log.isDebugEnabled()) {
+                    log.info("[{}] [{}] acknowledging message - {}, acktype {}", subscription, consumerName, messageId,
                             ackType);
-                }
+//                }
             } else {
                 // other messages in batch are still pending ack.
                 return CompletableFuture.completedFuture(null);
@@ -1083,10 +1083,10 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
             if (currentSize > 0) {
                 increaseAvailablePermits(cnx, currentSize);
             }
-            if (log.isDebugEnabled()) {
-                log.debug("[{}] [{}] [{}] Redeliver unacked messages and send {} permits", subscription, topic,
+//            if (log.isDebugEnabled()) {
+                log.info("[{}] [{}] [{}] Redeliver unacked messages and send {} permits", subscription, topic,
                         consumerName, currentSize);
-            }
+//            }
             return;
         }
         if (cnx == null || (getState() == State.Connecting)) {
