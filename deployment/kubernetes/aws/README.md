@@ -1,4 +1,3 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <!--
 
     Licensed to the Apache Software Foundation (ASF) under one
@@ -19,22 +18,9 @@
     under the License.
 
 -->
-<project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd" xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <packaging>pom</packaging>
-  <modelVersion>4.0.0</modelVersion>
-  <parent>
-    <groupId>org.apache.pulsar.tests</groupId>
-    <artifactId>tests-parent</artifactId>
-    <version>2.0.0-incubating-SNAPSHOT</version>
-  </parent>
 
-  <groupId>org.apache.pulsar.tests</groupId>
-  <artifactId>integration</artifactId>
-  <name>Apache Pulsar :: Tests :: Integration</name>
-  <modules>
-    <module>smoke</module>
-    <module>compaction</module>
-    <module>cli</module>
-  </modules>
-</project>
+This directory contains the Kubernetes services definitions for all the
+components required to run Pulsar and use ebs volume as bookie storage.
+
+Refer to [Kubernetes.md](../site/docs/latest/deployment/Kubernetes.md) document for instructions on
+how to deploy Pulsar on a Kubernetes cluster.
