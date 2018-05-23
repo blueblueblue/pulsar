@@ -50,6 +50,7 @@ import org.apache.pulsar.common.util.netty.EventLoopUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
@@ -491,6 +492,20 @@ public class PulsarClientImpl implements PulsarClient {
     void cleanupConsumer(ConsumerBase consumer) {
         synchronized (consumers) {
             consumers.remove(consumer);
+        }
+    }
+
+    @VisibleForTesting
+    int producersCount() {
+        synchronized (producers) {
+            return producers.size();
+        }
+    }
+
+    @VisibleForTesting
+    int consumersCount() {
+        synchronized (consumers) {
+            return consumers.size();
         }
     }
 }

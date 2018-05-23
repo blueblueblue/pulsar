@@ -190,9 +190,10 @@ public class ConsumerImpl extends ConsumerBase {
             ClientCnx cnx = cnx();
             cnx.sendRequestWithId(unsubscribe, requestId).thenRun(() -> {
                 cnx.removeConsumer(consumerId);
-                log.info("[{}][{}] Successfully unsubscribed from topic", topic, subscription);
                 batchMessageAckTracker.clear();
                 unAckedMessageTracker.close();
+                client.cleanupConsumer(ConsumerImpl.this);
+                log.info("[{}][{}] Successfully unsubscribed from topic", topic, subscription);
                 unsubscribeFuture.complete(null);
                 setState(State.Closed);
             }).exceptionally(e -> {
