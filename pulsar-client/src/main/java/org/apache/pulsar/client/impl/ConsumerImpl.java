@@ -84,7 +84,6 @@ public class ConsumerImpl extends ConsumerBase {
     private final int partitionIndex;
 
     private final int receiverQueueRefillThreshold;
-    private final CompressionCodecProvider codecProvider;
 
     private volatile boolean waitingOnReceiveForZeroQueueSize = false;
 
@@ -134,7 +133,6 @@ public class ConsumerImpl extends ConsumerBase {
         this.subscribeTimeout = System.currentTimeMillis() + client.getConfiguration().getOperationTimeoutMs();
         this.partitionIndex = partitionIndex;
         this.receiverQueueRefillThreshold = conf.getReceiverQueueSize() / 2;
-        this.codecProvider = new CompressionCodecProvider();
         this.priorityLevel = conf.getPriorityLevel();
         this.batchMessageAckTracker = new ConcurrentSkipListMap<>();
         this.readCompacted = conf.getReadCompacted();
@@ -1059,7 +1057,7 @@ public class ConsumerImpl extends ConsumerBase {
     private ByteBuf uncompressPayloadIfNeeded(MessageIdData messageId, MessageMetadata msgMetadata, ByteBuf payload,
             ClientCnx currentCnx) {
         CompressionType compressionType = msgMetadata.getCompression();
-        CompressionCodec codec = codecProvider.getCodec(compressionType);
+        CompressionCodec codec = CompressionCodecProvider.getCompressionCodec(compressionType);
         int uncompressedSize = msgMetadata.getUncompressedSize();
         int payloadSize = payload.readableBytes();
         if (payloadSize > PulsarDecoder.MaxMessageSize) {
