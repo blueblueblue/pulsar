@@ -24,7 +24,7 @@
 	<parent>
 		<groupId>org.apache.pulsar</groupId>
 		<artifactId>pulsar</artifactId>
-		<version>1.22.1-streamlio-2</version>
+		<version>1.22.1-streamlio-3</version>
 		<relativePath>..</relativePath>
 	</parent>
 
