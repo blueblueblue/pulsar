@@ -35,9 +35,10 @@ import com.google.gson.reflect.TypeToken;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.lang.reflect.Type;
-import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -51,14 +52,10 @@ import org.apache.commons.lang3.text.WordUtils;
 import org.apache.pulsar.admin.cli.utils.CmdUtils;
 import org.apache.pulsar.client.admin.PulsarAdmin;
 import org.apache.pulsar.client.admin.PulsarAdminException;
-import org.apache.pulsar.client.admin.internal.FunctionsImpl;
 import org.apache.pulsar.common.functions.Resources;
 import org.apache.pulsar.common.io.ConnectorDefinition;
-import org.apache.pulsar.common.nar.NarClassLoader;
-import org.apache.pulsar.functions.instance.AuthenticationConfig;
 import org.apache.pulsar.common.functions.FunctionConfig;
 import org.apache.pulsar.common.io.SourceConfig;
-import org.apache.pulsar.functions.utils.SourceConfigUtils;
 import org.apache.pulsar.functions.utils.Utils;
 import org.apache.pulsar.functions.utils.io.ConnectorUtils;
 import org.apache.pulsar.functions.utils.io.Connectors;
@@ -168,18 +165,25 @@ public class CmdSources extends CmdBase {
         }
 
         @Override
-        void runCmd() throws Exception {
+        public void runCmd() throws Exception {
             // merge deprecated args with new args
             mergeArgs();
 
-            CmdFunctions.startLocalRun(createSourceConfigProto2(sourceConfig), sourceConfig.getParallelism(),
-                    0, brokerServiceUrl, null,
-                    AuthenticationConfig.builder().clientAuthenticationPlugin(clientAuthPlugin)
-                            .clientAuthenticationParameters(clientAuthParams).useTls(useTls)
-                            .tlsAllowInsecureConnection(tlsAllowInsecureConnection)
-                            .tlsHostnameVerificationEnable(tlsHostNameVerificationEnabled)
-                            .tlsTrustCertsFilePath(tlsTrustCertFilePath).build(),
-                    sourceConfig.getArchive(), admin);
+            List<String> localRunArgs = new LinkedList<>();
+            localRunArgs.add(System.getenv("PULSAR_HOME") + "/bin/function-localrunner");
+            localRunArgs.add("--sourceConfig");
+            localRunArgs.add(new Gson().toJson(sourceConfig));
+            for (Field field : this.getClass().getDeclaredFields()) {
+                if (field.getName().startsWith("DEPRECATED")) continue;
+                Object value = field.get(this);
+                if (value != null) {
+                    localRunArgs.add("--" + field.getName());
+                    localRunArgs.add(value.toString());
+                }
+            }
+            ProcessBuilder processBuilder = new ProcessBuilder(localRunArgs).inheritIO();
+            Process process = processBuilder.start();
+            process.waitFor();
         }
 
         @Override
@@ -287,8 +291,6 @@ public class CmdSources extends CmdBase {
 
         protected SourceConfig sourceConfig;
 
-        protected NarClassLoader classLoader;
-
         private void mergeArgs() {
             if (DEPRECATED_processingGuarantees != null) processingGuarantees = DEPRECATED_processingGuarantees;
             if (!isBlank(DEPRECATED_destinationTopicName)) destinationTopicName = DEPRECATED_destinationTopicName;
@@ -371,8 +373,6 @@ public class CmdSources extends CmdBase {
                 sourceConfig.setConfigs(parseConfigs(sourceConfigString));
             }
 
-            inferMissingArguments(sourceConfig);
-
             // check if source configs are valid
             validateSourceConfigs(sourceConfig);
         }
@@ -381,15 +381,6 @@ public class CmdSources extends CmdBase {
             Type type = new TypeToken<Map<String, String>>() {
             }.getType();
             return new Gson().fromJson(str, type);
-        }
-
-        private void inferMissingArguments(SourceConfig sourceConfig) {
-            if (sourceConfig.getTenant() == null) {
-                sourceConfig.setTenant(PUBLIC_TENANT);
-            }
-            if (sourceConfig.getNamespace() == null) {
-                sourceConfig.setNamespace(DEFAULT_NAMESPACE);
-            }
         }
 
         protected void validateSourceConfigs(SourceConfig sourceConfig) {
@@ -402,23 +393,6 @@ public class CmdSources extends CmdBase {
                     throw new IllegalArgumentException(String.format("Source Archive %s does not exist", sourceConfig.getArchive()));
                 }
             }
-
-            try {
-             // Need to load jar and set context class loader before calling
-                String sourcePkgUrl = Utils.isFunctionPackageUrlSupported(sourceConfig.getArchive()) ? sourceConfig.getArchive() : null;
-                Path archivePath = (Utils.isFunctionPackageUrlSupported(sourceConfig.getArchive()) || sourceConfig.getArchive().startsWith(BUILTIN)) ? null : new File(sourceConfig.getArchive()).toPath();
-                classLoader = SourceConfigUtils.validate(sourceConfig, archivePath, sourcePkgUrl, null);
-            } catch (Exception e) {
-                throw new ParameterException(e.getMessage());
-            }
-        }
-
-        protected org.apache.pulsar.functions.proto.Function.FunctionDetails createSourceConfigProto2(SourceConfig sourceConfig)
-                throws IOException {
-            org.apache.pulsar.functions.proto.Function.FunctionDetails.Builder functionDetailsBuilder
-                    = org.apache.pulsar.functions.proto.Function.FunctionDetails.newBuilder();
-            Utils.mergeJson(FunctionsImpl.printJson(SourceConfigUtils.convert(sourceConfig, classLoader)), functionDetailsBuilder);
-            return functionDetailsBuilder.build();
         }
 
         protected String validateSourceType(String sourceType) throws IOException {

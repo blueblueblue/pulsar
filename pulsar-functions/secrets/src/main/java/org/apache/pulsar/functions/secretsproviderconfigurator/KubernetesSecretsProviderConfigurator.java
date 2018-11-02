@@ -20,10 +20,7 @@ package org.apache.pulsar.functions.secretsproviderconfigurator;
 
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
-import io.kubernetes.client.models.V1Container;
-import io.kubernetes.client.models.V1EnvVar;
-import io.kubernetes.client.models.V1EnvVarSource;
-import io.kubernetes.client.models.V1SecretKeySelector;
+import io.kubernetes.client.models.*;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.functions.proto.Function;
 import org.apache.pulsar.functions.secretsprovider.EnvironmentBasedSecretsProvider;
@@ -39,7 +36,7 @@ import java.util.Map;
  * EnvironmentBasedSecretsConfig as the secrets provider who knows how to read these environment variables
  */
 public class KubernetesSecretsProviderConfigurator implements SecretsProviderConfigurator {
-    private static String ID_KEY = "id";
+    private static String ID_KEY = "path";
     private static String KEY_KEY = "key";
     @Override
     public String getSecretsProviderClassName(Function.FunctionDetails functionDetails) {
@@ -62,7 +59,17 @@ public class KubernetesSecretsProviderConfigurator implements SecretsProviderCon
     // environment variables way. Essentially the secretName/secretPath is attached as secretRef to the environment variables
     // of a pod and kubernetes magically makes the secret pointed to by this combination available as a env variable.
     @Override
-    public void configureKubernetesRuntimeSecretsProvider(V1Container container, Function.FunctionDetails functionDetails) {
+    public void configureKubernetesRuntimeSecretsProvider(V1PodSpec podSpec, String functionsContainerName, Function.FunctionDetails functionDetails) {
+        V1Container container = null;
+        for (V1Container v1Container : podSpec.getContainers()) {
+            if (v1Container.getName().equals(functionsContainerName)) {
+                container = v1Container;
+                break;
+            }
+        }
+        if (container == null) {
+            throw new RuntimeException("No FunctionContainer found");
+        }
         if (!StringUtils.isEmpty(functionDetails.getSecretsMap())) {
             Type type = new TypeToken<Map<String, Object>>() {
             }.getType();

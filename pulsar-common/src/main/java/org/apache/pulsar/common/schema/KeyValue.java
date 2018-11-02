@@ -16,10 +16,25 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.pulsar.functions.windowing;
+package org.apache.pulsar.common.schema;
 
-public class WindowUtils {
-    public static String getFullyQualifiedName(String tenant, String namespace, String name) {
-        return String.format("%s/%s/%s", tenant, namespace, name);
+/**
+ * A simple KeyValue class
+ */
+public class KeyValue<K, V> {
+    private final K key;
+    private final V value;
+
+    public KeyValue(K key, V value) {
+        this.key = key;
+        this.value = value;
+    }
+
+    public K getKey() {
+        return key;
+    }
+
+    public V getValue() {
+        return value;
     }
 }

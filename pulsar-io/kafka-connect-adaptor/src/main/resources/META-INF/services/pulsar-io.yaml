@@ -1,4 +1,3 @@
-#!/usr/bin/env bash
 #
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
@@ -18,10 +17,6 @@
 # under the License.
 #
 
-BINDIR=$(dirname "$0")
-export PULSAR_HOME=`cd $BINDIR/..;pwd`
-. "$PULSAR_HOME/bin/pulsar-admin-common.sh"
-
-#Change to PULSAR_HOME to support relative paths
-cd "$PULSAR_HOME"
-exec $JAVA $OPTS org.apache.pulsar.admin.cli.PulsarAdminTool $PULSAR_CLIENT_CONF "$@"
+name: kafka-connect-adaptor
+description: Kafka source connect adaptor
+sourceClass: org.apache.pulsar.io.kafka.connect.KafkaConnectSource

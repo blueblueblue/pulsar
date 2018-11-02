@@ -35,8 +35,8 @@ import com.google.gson.reflect.TypeToken;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.lang.reflect.Type;
-import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -49,13 +49,10 @@ import org.apache.commons.lang3.text.WordUtils;
 import org.apache.pulsar.admin.cli.utils.CmdUtils;
 import org.apache.pulsar.client.admin.PulsarAdmin;
 import org.apache.pulsar.client.admin.PulsarAdminException;
-import org.apache.pulsar.client.admin.internal.FunctionsImpl;
 import org.apache.pulsar.common.functions.FunctionConfig;
 import org.apache.pulsar.common.functions.Resources;
 import org.apache.pulsar.common.io.ConnectorDefinition;
 import org.apache.pulsar.common.io.SinkConfig;
-import org.apache.pulsar.common.nar.NarClassLoader;
-import org.apache.pulsar.functions.instance.AuthenticationConfig;
 import org.apache.pulsar.functions.utils.*;
 import org.apache.pulsar.functions.utils.io.ConnectorUtils;
 import org.apache.pulsar.functions.utils.io.Connectors;
@@ -165,18 +162,24 @@ public class CmdSinks extends CmdBase {
         }
 
         @Override
-        void runCmd() throws Exception {
+        public void runCmd() throws Exception {
             // merge deprecated args with new args
             mergeArgs();
-
-            CmdFunctions.startLocalRun(createSinkConfigProto2(sinkConfig), sinkConfig.getParallelism(),
-                    0, brokerServiceUrl, null,
-                    AuthenticationConfig.builder().clientAuthenticationPlugin(clientAuthPlugin)
-                            .clientAuthenticationParameters(clientAuthParams).useTls(useTls)
-                            .tlsAllowInsecureConnection(tlsAllowInsecureConnection)
-                            .tlsHostnameVerificationEnable(tlsHostNameVerificationEnabled)
-                            .tlsTrustCertsFilePath(tlsTrustCertFilePath).build(),
-                    sinkConfig.getArchive(), admin);
+            List<String> localRunArgs = new LinkedList<>();
+            localRunArgs.add(System.getenv("PULSAR_HOME") + "/bin/function-localrunner");
+            localRunArgs.add("--sinkConfig");
+            localRunArgs.add(new Gson().toJson(sinkConfig));
+            for (Field field : this.getClass().getDeclaredFields()) {
+                if (field.getName().startsWith("DEPRECATED")) continue;
+                Object value = field.get(this);
+                if (value != null) {
+                    localRunArgs.add("--" + field.getName());
+                    localRunArgs.add(value.toString());
+                }
+            }
+            ProcessBuilder processBuilder = new ProcessBuilder(localRunArgs).inheritIO();
+            Process process = processBuilder.start();
+            process.waitFor();
         }
 
         @Override
@@ -299,8 +302,6 @@ public class CmdSinks extends CmdBase {
 
         protected SinkConfig sinkConfig;
 
-        protected NarClassLoader classLoader;
-
         private void mergeArgs() {
             if (!StringUtils.isBlank(DEPRECATED_subsName)) subsName = DEPRECATED_subsName;
             if (!StringUtils.isBlank(DEPRECATED_topicsPattern)) topicsPattern = DEPRECATED_topicsPattern;
@@ -414,8 +415,6 @@ public class CmdSinks extends CmdBase {
             if (null != sinkConfigString) {
                 sinkConfig.setConfigs(parseConfigs(sinkConfigString));
             }
-            
-            inferMissingArguments(sinkConfig);
 
             // check if configs are valid
             validateSinkConfigs(sinkConfig);
@@ -424,15 +423,6 @@ public class CmdSinks extends CmdBase {
         protected Map<String, Object> parseConfigs(String str) {
             Type type = new TypeToken<Map<String, String>>(){}.getType();
             return new Gson().fromJson(str, type);
-        }
-
-        protected void inferMissingArguments(SinkConfig sinkConfig) {
-            if (sinkConfig.getTenant() == null) {
-                sinkConfig.setTenant(PUBLIC_TENANT);
-            }
-            if (sinkConfig.getNamespace() == null) {
-                sinkConfig.setNamespace(DEFAULT_NAMESPACE);
-            }
         }
 
         protected void validateSinkConfigs(SinkConfig sinkConfig) {
@@ -447,24 +437,6 @@ public class CmdSinks extends CmdBase {
                     throw new IllegalArgumentException(String.format("Sink Archive file %s does not exist", sinkConfig.getArchive()));
                 }
             }
-
-            try {
-                // Need to load jar and set context class loader before calling
-                String sourcePkgUrl = Utils.isFunctionPackageUrlSupported(sinkConfig.getArchive()) ? sinkConfig.getArchive() : null;
-                Path archivePath = (Utils.isFunctionPackageUrlSupported(sinkConfig.getArchive()) || sinkConfig.getArchive().startsWith(BUILTIN)) ? null : new File(sinkConfig.getArchive()).toPath();
-                classLoader = SinkConfigUtils.validate(sinkConfig, archivePath, sourcePkgUrl, null);
-            } catch (Exception e) {
-                throw new ParameterException(e.getMessage());
-            }
-        }
-
-
-        protected org.apache.pulsar.functions.proto.Function.FunctionDetails createSinkConfigProto2(SinkConfig sinkConfig)
-                throws IOException {
-            org.apache.pulsar.functions.proto.Function.FunctionDetails.Builder functionDetailsBuilder
-                    = org.apache.pulsar.functions.proto.Function.FunctionDetails.newBuilder();
-            Utils.mergeJson(FunctionsImpl.printJson(SinkConfigUtils.convert(sinkConfig, classLoader)), functionDetailsBuilder);
-            return functionDetailsBuilder.build();
         }
 
         protected String validateSinkType(String sinkType) throws IOException {
