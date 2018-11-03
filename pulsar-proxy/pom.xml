@@ -24,7 +24,7 @@
   <parent>
     <groupId>org.apache.pulsar</groupId>
     <artifactId>pulsar</artifactId>
-    <version>2.2.0-streamlio-22</version>
+    <version>2.2.0-streamlio-23</version>
   </parent>
 
   <artifactId>pulsar-proxy</artifactId>
