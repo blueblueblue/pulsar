@@ -139,6 +139,7 @@ public class FunctionRuntimeManager implements AutoCloseable{
                     workerConfig.getProcessContainerFactory().getJavaInstanceJarLocation(),
                     workerConfig.getProcessContainerFactory().getPythonInstanceLocation(),
                     workerConfig.getProcessContainerFactory().getLogDirectory(),
+                    workerConfig.getProcessContainerFactory().getExtraFunctionDependenciesDir(),
                     secretsProviderConfigurator);
         } else if (workerConfig.getKubernetesContainerFactory() != null){
             this.runtimeFactory = new KubernetesRuntimeFactory(
@@ -150,6 +151,7 @@ public class FunctionRuntimeManager implements AutoCloseable{
                     workerConfig.getKubernetesContainerFactory().getInstallUserCodeDependencies(),
                     workerConfig.getKubernetesContainerFactory().getPythonDependencyRepository(),
                     workerConfig.getKubernetesContainerFactory().getPythonExtraDependencyRepository(),
+                    workerConfig.getKubernetesContainerFactory().getExtraFunctionDependenciesDir(),
                     workerConfig.getKubernetesContainerFactory().getCustomLabels(),
                     StringUtils.isEmpty(workerConfig.getKubernetesContainerFactory().getPulsarServiceUrl()) ? workerConfig.getPulsarServiceUrl() : workerConfig.getKubernetesContainerFactory().getPulsarServiceUrl(),
                     StringUtils.isEmpty(workerConfig.getKubernetesContainerFactory().getPulsarAdminUrl()) ? workerConfig.getPulsarWebServiceUrl() : workerConfig.getKubernetesContainerFactory().getPulsarAdminUrl(),
@@ -713,26 +715,7 @@ public class FunctionRuntimeManager implements AutoCloseable{
     public Map<String, FunctionRuntimeInfo> getFunctionRuntimeInfos() {
         return this.functionRuntimeInfoMap;
     }
-    
-    public void updateRates() {
-        if (runtimeFactory.externallyManaged()) {
-            // We don't do metrics management for externally managed functions
-            return;
-        }
-        for (Entry<String, FunctionRuntimeInfo> entry : this.functionRuntimeInfoMap.entrySet()) {
-            RuntimeSpawner functionRuntimeSpawner = entry.getValue().getRuntimeSpawner();
-            if (functionRuntimeSpawner != null) {
-                Runtime functionRuntime = functionRuntimeSpawner.getRuntime();
-                if (functionRuntime != null) {
-                    try {
-                        functionRuntime.resetMetrics().get();
-                    } catch (Exception e) {
-                        log.error("Failed to update stats for {}-{}", entry.getKey(), e.getMessage());
-                    }
-                }
-            }
-        }
-    }
+
     /**
      * Private methods for internal use.  Should not be used outside of this class
      */

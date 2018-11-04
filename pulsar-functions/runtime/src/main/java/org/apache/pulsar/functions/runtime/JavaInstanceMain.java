@@ -29,6 +29,8 @@ import com.google.protobuf.util.JsonFormat;
 import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.stub.StreamObserver;
+import io.prometheus.client.exporter.HTTPServer;
+import io.prometheus.client.hotspot.DefaultExports;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.pulsar.functions.instance.AuthenticationConfig;
@@ -138,6 +140,12 @@ public class JavaInstanceMain implements AutoCloseable {
 
         Map<String, String> secretsProviderConfigMap = null;
         if (!StringUtils.isEmpty(secretsProviderConfig)) {
+            if (secretsProviderConfig.charAt(0) == '\'') {
+                secretsProviderConfig = secretsProviderConfig.substring(1);
+            }
+            if (secretsProviderConfig.charAt(secretsProviderConfig.length() - 1) == '\'') {
+                secretsProviderConfig = secretsProviderConfig.substring(0, secretsProviderConfig.length() - 1);
+            }
             Type type = new TypeToken<Map<String, String>>() {}.getType();
             secretsProviderConfigMap = new Gson().fromJson(secretsProviderConfig, type);
         }
@@ -186,6 +194,10 @@ public class JavaInstanceMain implements AutoCloseable {
                 }
             }
         });
+
+        // registering jvm metrics to prometheus
+        DefaultExports.initialize();
+
         log.info("Starting runtimeSpawner");
         runtimeSpawner.start();
 
