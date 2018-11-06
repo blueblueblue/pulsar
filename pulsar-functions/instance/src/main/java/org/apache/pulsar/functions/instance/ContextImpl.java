@@ -24,8 +24,10 @@ import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -33,7 +35,11 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import java.util.function.Function;
 
+import io.prometheus.client.CollectorRegistry;
+import io.prometheus.client.Gauge;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -92,7 +98,6 @@ class ContextImpl implements Context, SinkContext, SourceContext {
         }
     }
 
-    private ConcurrentMap<String, AccumulatedMetricDatum> currentAccumulatedMetrics;
     private ConcurrentMap<String, AccumulatedMetricDatum> accumulatedMetrics;
 
     private Map<String, Producer<?>> publishProducers;
@@ -110,11 +115,21 @@ class ContextImpl implements Context, SinkContext, SourceContext {
     private StateContextImpl stateContext;
     private Map<String, Object> userConfigs;
 
+    Map<String, Gauge> userMetrics = new HashMap<>();
+    private final CollectorRegistry collectorRegistry;
+    private final String[] userMetricsLabels;
+
+    private final static String[] userMetricsLabelNames;
+    static {
+        // add label to indicate user metric
+        userMetricsLabelNames = Arrays.copyOf(FunctionStats.metricsLabelNames, FunctionStats.metricsLabelNames.length + 1);
+        userMetricsLabelNames[FunctionStats.metricsLabelNames.length] = "user_metric";
+    }
+
     public ContextImpl(InstanceConfig config, Logger logger, PulsarClient client, List<String> inputTopics,
-                       SecretsProvider secretsProvider) {
+                       SecretsProvider secretsProvider, CollectorRegistry collectorRegistry, String[] metricsLabels) {
         this.config = config;
         this.logger = logger;
-        this.currentAccumulatedMetrics = new ConcurrentHashMap<>();
         this.accumulatedMetrics = new ConcurrentHashMap<>();
         this.publishProducers = new HashMap<>();
         this.inputTopics = inputTopics;
@@ -138,6 +153,12 @@ class ContextImpl implements Context, SinkContext, SourceContext {
         } else {
             secretsMap = new HashMap<>();
         }
+
+        this.collectorRegistry = collectorRegistry;
+
+        // add label to user metrics: user_metric=true
+        this.userMetricsLabels = Arrays.copyOf(metricsLabels, metricsLabels.length + 1);
+        this.userMetricsLabels[metricsLabels.length] = "true";
     }
 
     public void setCurrentMessageContext(Record<?> record) {
@@ -320,8 +341,16 @@ class ContextImpl implements Context, SinkContext, SourceContext {
 
     @Override
     public void recordMetric(String metricName, double value) {
-        currentAccumulatedMetrics.putIfAbsent(metricName, new AccumulatedMetricDatum());
-        currentAccumulatedMetrics.get(metricName).update(value);
+        userMetrics.computeIfAbsent(metricName,
+                s -> Gauge.build()
+                .name("pulsar_function_user_metric_" + metricName)
+                        .help("Pulsar Function user metric " + metricName + ".")
+                .labelNames(userMetricsLabelNames)
+                .register(collectorRegistry));
+
+        userMetrics.get(metricName).labels(userMetricsLabels).set(value);
+        accumulatedMetrics.putIfAbsent(metricName, new AccumulatedMetricDatum());
+        accumulatedMetrics.get(metricName).update(value);
     }
 
     public MetricsData getAndResetMetrics() {
@@ -331,9 +360,8 @@ class ContextImpl implements Context, SinkContext, SourceContext {
     }
 
     public void resetMetrics() {
+        userMetrics.values().forEach(gauge -> gauge.clear());
         this.accumulatedMetrics.clear();
-        this.accumulatedMetrics.putAll(currentAccumulatedMetrics);
-        this.currentAccumulatedMetrics.clear();
     }
 
     public MetricsData getMetrics() {
