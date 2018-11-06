@@ -35,6 +35,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import io.kubernetes.client.apis.AppsV1Api;
+import io.kubernetes.client.apis.CoreV1Api;
 import io.kubernetes.client.models.V1PodSpec;
 import org.apache.pulsar.functions.instance.InstanceConfig;
 import org.apache.pulsar.functions.proto.Function;
@@ -88,7 +90,7 @@ public class ProcessRuntimeTest {
         }
 
         @Override
-        public void validateSecretMap(Map<String, Object> secretMap) {
+        public void doAdmissionChecks(AppsV1Api appsV1Api, CoreV1Api coreV1Api, String jobNamespace, FunctionDetails functionDetails) {
 
         }
     }
@@ -303,21 +305,10 @@ public class ProcessRuntimeTest {
         ProcessRuntime container = factory.createContainer(config, userJarFile, null, 30l);
         List<String> args = container.getProcessArgs();
 
-        int totalArgs;
-        int portArg;
-        String pythonPath;
-        int configArg;
-        if (null == extraDepsDir) {
-            totalArgs = 30;
-            portArg = 23;
-            configArg = 9;
-            pythonPath = "";
-        } else {
-            totalArgs = 31;
-            portArg = 24;
-            configArg = 10;
-            pythonPath = "PYTHONPATH=${PYTHONPATH}:" + extraDepsDir + " ";
-        }
+        int totalArgs = 30;
+        int portArg = 23;
+        String pythonPath = "";
+        int configArg = 9;
 
         assertEquals(args.size(), totalArgs);
         String expectedArgs = pythonPath + "python " + pythonInstanceFile
