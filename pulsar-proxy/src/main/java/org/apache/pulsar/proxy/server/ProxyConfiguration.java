@@ -142,6 +142,9 @@ public class ProxyConfiguration implements PulsarConfiguration {
     @FieldContext(minValue = 1)
     private int httpOutputBufferSize = 32*1024;
 
+    // Number of threads to use for HTTP requests processing
+    private int httpNumThreads = Runtime.getRuntime().availableProcessors();
+
     private Properties properties = new Properties();
 
     public boolean forwardAuthorizationCredentials() {
@@ -256,6 +259,14 @@ public class ProxyConfiguration implements PulsarConfiguration {
 
     public void setWebServicePortTls(int webServicePortTls) {
         this.webServicePortTls = webServicePortTls;
+    }
+
+    public int getHttpNumThreads() {
+        return httpNumThreads;
+    }
+
+    public void setHttpNumThreads(int httpNumThreads) {
+        this.httpNumThreads = httpNumThreads;
     }
 
     public String getStatusFilePath() {

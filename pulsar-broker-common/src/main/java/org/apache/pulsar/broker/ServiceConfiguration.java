@@ -65,6 +65,9 @@ public class ServiceConfiguration implements PulsarConfiguration {
     // Number of threads to use for Netty IO
     private int numIOThreads = 2 * Runtime.getRuntime().availableProcessors();
 
+    // Number of threads to use for HTTP requests processing
+    private int numHttpServerThreads = Runtime.getRuntime().availableProcessors();
+
     // Enable the WebSocket API service
     private boolean webSocketServiceEnabled = false;
 
@@ -1531,12 +1534,12 @@ public class ServiceConfiguration implements PulsarConfiguration {
     public void setReplicationProducerQueueSize(int replicationProducerQueueSize) {
         this.replicationProducerQueueSize = replicationProducerQueueSize;
     }
-    
+
     @Deprecated
     public boolean isReplicationTlsEnabled() {
         return replicationTlsEnabled;
     }
-    
+
     @Deprecated
     public void setReplicationTlsEnabled(boolean replicationTlsEnabled) {
         this.replicationTlsEnabled = replicationTlsEnabled;
@@ -1737,6 +1740,13 @@ public class ServiceConfiguration implements PulsarConfiguration {
         return functionsWorkerEnabled;
     }
 
+    public int getNumHttpServerThreads() {
+        return numHttpServerThreads;
+    }
+
+    public void setNumHttpServerThreads(int numHttpServerThreads) {
+        this.numHttpServerThreads = numHttpServerThreads;
+    }
 
     /**** --- Broker Web Stats ---- ****/
 
